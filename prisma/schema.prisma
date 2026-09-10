@@ -1,0 +1,979 @@
+// ============================================================
+// Prisma Schema — Cruz Blanca Gestión
+// Fase 1: núcleo (auth, RBAC, auditoría, archivos, configuración)
+// Fase 2A: módulo RRHH (empleados, contratos, horarios)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── USUARIOS ─────────────────────────────────────────────────
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  name           String
+  roleId         String    @map("role_id")
+  isActive       Boolean   @default(true) @map("is_active")
+  mustChangePwd  Boolean   @default(true) @map("must_change_pwd")
+  lastLoginAt    DateTime? @map("last_login_at")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  role        Role        @relation(fields: [roleId], references: [id])
+  auditLogs   AuditLog[]
+  appSettings AppSetting[]
+
+  employeesCreated Employee[]     @relation("EmployeeCreatedBy")
+  employeesUpdated Employee[]     @relation("EmployeeUpdatedBy")
+  contractsCreated Contract[]     @relation("ContractCreatedBy")
+  schedulesCreated WeeklySchedule[] @relation("ScheduleCreatedBy")
+
+  timeRecordsCreated TimeRecord[] @relation("TimeRecordCreatedBy")
+  timeRecordsClosed  TimeRecord[] @relation("TimeRecordClosedBy")
+  timeRecordsReopened TimeRecord[] @relation("TimeRecordReopenedBy")
+  timeRecordPdfs     TimeRecordPdf[] @relation("TimeRecordPdfGeneratedBy")
+  docsUploaded       EmployeeDocument[] @relation("DocUploadedBy")
+  docsDeleted        EmployeeDocument[] @relation("DocDeletedBy")
+
+  suppliersCreated      Supplier[]        @relation("SupplierCreatedBy")
+  productsCreated       Product[]         @relation("ProductCreatedBy")
+  supplierProductsCreated SupplierProduct[] @relation("SupplierProductCreatedBy")
+  invoicesCreated       Invoice[]         @relation("InvoiceCreatedBy")
+  ordersCreated         Order[]           @relation("OrderCreatedBy")
+  invoiceBundlesCreated InvoiceBundle[]   @relation("BundleCreatedBy")
+  gestoriaPackagesCreated GestoriaPackage[] @relation("GestoriaPackageCreatedBy")
+  mayorsCreated           SupplierMayor[]   @relation("MayorCreatedBy")
+  quarterStatusesUpdated  SupplierQuarterStatus[] @relation("QuarterStatusUpdatedBy")
+
+  dishesCreated      Dish[]      @relation("DishCreatedBy")
+  dishesUpdated      Dish[]      @relation("DishUpdatedBy")
+  dailyMenusCreated  DailyMenu[] @relation("DailyMenuCreatedBy")
+  dailyMenusUpdated  DailyMenu[] @relation("DailyMenuUpdatedBy")
+  menuPdfsGenerated  MenuPdf[]   @relation("MenuPdfGeneratedBy")
+
+  issuedInvoicesCreated IssuedInvoice[] @relation("IssuedInvoiceCreatedBy")
+
+  dismissedAlerts DismissedAlert[]
+
+  @@map("users")
+}
+
+// ── ROLES ────────────────────────────────────────────────────
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique // ADMIN | RRHH | ENCARGADO | COCINA
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+// ── PERMISOS ─────────────────────────────────────────────────
+model Permission {
+  id     String @id @default(uuid())
+  action String @unique // e.g. hr:employees:read
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ── AUDITORÍA ────────────────────────────────────────────────
+// Registro inmutable: nunca se modifica ni elimina
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?  @map("actor_id")
+  action     String   // constante de evento, p.ej. USER_LOGIN
+  targetType String?  @map("target_type")
+  targetId   String?  @map("target_id")
+  metadata   Json?    // contexto sin datos sensibles
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}
+
+// ── CONFIGURACIÓN DINÁMICA ───────────────────────────────────
+model AppSetting {
+  key         String   @id // e.g. company.name, company.cif
+  value       String
+  updatedById String?  @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("app_settings")
+}
+
+// ── ARCHIVOS ─────────────────────────────────────────────────
+// Registro de archivos subidos; el contenido físico lo gestiona StorageProvider
+model StoredFile {
+  id           String    @id @default(uuid())
+  storageKey   String    @unique @map("storage_key") // ruta opaca, nunca DNI/nombre
+  originalName String    @map("original_name")
+  mimeType     String    @map("mime_type")
+  sizeBytes    Int       @map("size_bytes")
+  sha256       String
+  uploadedById String?   @map("uploaded_by")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  employeeDocuments EmployeeDocument[]
+  invoices          Invoice[]          @relation("InvoiceFile")
+  invoiceBundles    InvoiceBundle[]    @relation("BundleFile")
+  mayorFiles        SupplierMayor[]    @relation("MayorFile")
+
+  @@map("stored_files")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 2A — MÓDULO RRHH
+// ══════════════════════════════════════════════════════════════
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+}
+
+// ── EMPLEADOS ────────────────────────────────────────────────
+// Los campos sensibles se cifran a nivel de aplicación (AES-256-GCM).
+// Los campos *Hash son HMAC-SHA256 ciego para búsqueda sin revelar el valor.
+model Employee {
+  id        String         @id @default(uuid())
+  firstName String         @map("first_name")
+  lastName  String         @map("last_name")
+  email     String?
+
+  status   EmployeeStatus @default(ACTIVE)
+  hireDate         DateTime  @map("hire_date") @db.Date
+  terminationDate  DateTime? @map("termination_date") @db.Date
+  notes    String?
+
+  // Campos cifrados — AES-256-GCM (iv:ciphertext:tag en base64)
+  dniEncrypted                   String? @map("dni_encrypted")
+  dniHash                        String? @map("dni_hash") // HMAC para búsqueda
+  nafEncrypted                   String? @map("naf_encrypted")
+  phoneEncrypted                 String? @map("phone_encrypted")
+  addressEncrypted               String? @map("address_encrypted")
+  emergencyContactName           String? @map("emergency_contact_name")
+  emergencyContactPhoneEncrypted String? @map("emergency_contact_phone_encrypted")
+
+  createdById String    @map("created_by_id")
+  updatedById String?   @map("updated_by_id")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  createdBy User  @relation("EmployeeCreatedBy", fields: [createdById], references: [id])
+  updatedBy User? @relation("EmployeeUpdatedBy", fields: [updatedById], references: [id])
+
+  contracts   Contract[]
+  schedules   WeeklySchedule[]
+  timeRecords TimeRecord[]
+  documents   EmployeeDocument[]
+
+  @@index([status, deletedAt])
+  @@index([dniHash])
+  @@map("employees")
+}
+
+// ── CONTRATOS ────────────────────────────────────────────────
+// Versionados: se crea un nuevo registro por cada cambio contractual.
+// No se eliminan, solo se añaden versiones nuevas.
+model Contract {
+  id           String    @id @default(uuid())
+  employeeId   String    @map("employee_id")
+  // Tipo: indefinido | temporal | formacion | interinidad | obra_servicio | otro
+  contractType String    @map("contract_type")
+  startDate    DateTime  @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  weeklyHours  Decimal   @map("weekly_hours") @db.Decimal(5, 2)
+  monthlyHours Decimal?  @map("monthly_hours") @db.Decimal(6, 2)
+  isFullTime   Boolean   @default(true) @map("is_full_time")
+  notes        String?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  employee  Employee @relation(fields: [employeeId], references: [id])
+  createdBy User     @relation("ContractCreatedBy", fields: [createdById], references: [id])
+
+  @@index([employeeId, startDate])
+  @@map("contracts")
+}
+
+// ── HORARIOS SEMANALES ───────────────────────────────────────
+// Versionados por fecha de vigencia. El horario activo es el de
+// effectiveFrom más reciente que no supere la fecha actual.
+model WeeklySchedule {
+  id            String    @id @default(uuid())
+  employeeId    String    @map("employee_id")
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  notes         String?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  employee  Employee    @relation(fields: [employeeId], references: [id])
+  createdBy User        @relation("ScheduleCreatedBy", fields: [createdById], references: [id])
+  days      ScheduleDay[]
+
+  @@index([employeeId, effectiveFrom])
+  @@map("weekly_schedules")
+}
+
+// ── DÍAS DE HORARIO ──────────────────────────────────────────
+// Cada fila es un día de la semana dentro de un horario.
+// Los tramos se guardan como "HH:MM" para evitar problemas de zona horaria.
+// Admite cruce de medianoche (p.ej. afternoonStart="22:00", afternoonEnd="02:00").
+model ScheduleDay {
+  id         String         @id @default(uuid())
+  scheduleId String         @map("schedule_id")
+  dayOfWeek  Int            @map("day_of_week") // 1=lunes … 7=domingo
+  isRestDay  Boolean        @default(false) @map("is_rest_day")
+
+  // Tramo mañana
+  morningStart String? @map("morning_start") // "HH:MM"
+  morningEnd   String? @map("morning_end")
+
+  // Tramo tarde / noche (puede cruzar medianoche)
+  afternoonStart String? @map("afternoon_start")
+  afternoonEnd   String? @map("afternoon_end")
+
+  schedule WeeklySchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, dayOfWeek])
+  @@map("schedule_days")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 2B — REGISTRO DE JORNADA Y PDF
+// ══════════════════════════════════════════════════════════════
+
+enum TimeRecordStatus {
+  DRAFT
+  CLOSED
+}
+
+enum DayType {
+  WORK
+  REST
+  HOLIDAY
+  ABSENCE
+  VACATION
+  SICK_LEAVE
+}
+
+// ── REGISTRO MENSUAL DE JORNADA ───────────────────────────────
+// Una fila por empleado y mes. Inmutable una vez cerrado,
+// salvo reapertura explícita con motivo obligatorio.
+model TimeRecord {
+  id     String           @id @default(uuid())
+  employeeId String       @map("employee_id")
+  year   Int
+  month  Int              // 1-12
+
+  status     TimeRecordStatus @default(DRAFT)
+  closedAt   DateTime?        @map("closed_at")
+  closedById String?          @map("closed_by_id")
+  reopenedAt   DateTime?      @map("reopened_at")
+  reopenedById String?        @map("reopened_by_id")
+  reopenReason String?        @map("reopen_reason")
+
+  // Snapshot del contrato y horario vigentes al crear el borrador
+  contractSnapshot Json @map("contract_snapshot")
+  scheduleSnapshot Json @map("schedule_snapshot")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  createdBy   User      @relation("TimeRecordCreatedBy", fields: [createdById], references: [id])
+  closedBy    User?     @relation("TimeRecordClosedBy", fields: [closedById], references: [id])
+  reopenedBy  User?     @relation("TimeRecordReopenedBy", fields: [reopenedById], references: [id])
+  days        TimeRecordDay[]
+  pdfs        TimeRecordPdf[]
+
+  @@unique([employeeId, year, month])
+  @@index([employeeId, year, month])
+  @@map("time_records")
+}
+
+// ── DÍAS DEL REGISTRO DE JORNADA ────────────────────────────
+// Una fila por día del mes. Se precarga desde el horario habitual.
+model TimeRecordDay {
+  id           String    @id @default(uuid())
+  timeRecordId String    @map("time_record_id")
+  date         DateTime  @db.Date
+
+  dayType DayType @default(WORK) @map("day_type")
+
+  // Tramo mañana
+  morningStart String? @map("morning_start") // "HH:MM"
+  morningEnd   String? @map("morning_end")
+
+  // Tramo tarde / noche (puede cruzar medianoche)
+  afternoonStart String? @map("afternoon_start")
+  afternoonEnd   String? @map("afternoon_end")
+
+  // Minutos calculados; ordinaryMinutes y overtimeMinutes son revisables
+  totalMinutes    Int? @map("total_minutes")
+  ordinaryMinutes Int? @map("ordinary_minutes")
+  overtimeMinutes Int? @map("overtime_minutes")
+  observation     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  timeRecord TimeRecord @relation(fields: [timeRecordId], references: [id], onDelete: Cascade)
+
+  @@unique([timeRecordId, date])
+  @@map("time_record_days")
+}
+
+// ── PDFs DE JORNADA ──────────────────────────────────────────
+// Versiones del PDF generado para un registro mensual.
+model TimeRecordPdf {
+  id           String   @id @default(uuid())
+  timeRecordId String   @map("time_record_id")
+  version      Int
+  storageKey   String   @map("storage_key") // ruta en StorageProvider
+  sizeBytes    Int      @map("size_bytes")
+  isCurrent    Boolean  @default(true) @map("is_current")
+
+  generatedById String   @map("generated_by_id")
+  generatedAt   DateTime @default(now()) @map("generated_at")
+
+  timeRecord  TimeRecord @relation(fields: [timeRecordId], references: [id])
+  generatedBy User       @relation("TimeRecordPdfGeneratedBy", fields: [generatedById], references: [id])
+
+  @@index([timeRecordId, isCurrent])
+  @@map("time_record_pdfs")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 2C — DOCUMENTOS DE EMPLEADOS
+// ══════════════════════════════════════════════════════════════
+
+enum EmployeeDocCategory {
+  CONTRACT         // Contrato
+  ID_DOCUMENT      // DNI/NIE/Pasaporte
+  SOCIAL_SECURITY  // Seguridad Social
+  PAYSLIP          // Nómina
+  PAYSLIP_SIGNED   // Nómina firmada
+  SEVERANCE        // Finiquito
+  SICK_LEAVE       // Baja médica
+  RETURN_TO_WORK   // Alta médica
+  VACATION         // Vacaciones
+  COMMUNICATION    // Comunicación
+  OTHER            // Otro
+
+  @@map("employee_doc_category")
+}
+
+enum EmployeeDocStatus {
+  PENDING  // Pendiente
+  SIGNED   // Firmado
+
+  @@map("employee_doc_status")
+}
+
+model EmployeeDocument {
+  id           String                @id @default(uuid())
+  employeeId   String                @map("employee_id")
+  storedFileId String                @map("stored_file_id")
+  category     EmployeeDocCategory
+  title        String
+  docDate      DateTime?             @map("doc_date") @db.Date
+  year         Int?                  // año al que corresponde el doc (p.ej. nómina 2025)
+  month        Int?                  // mes 1-12, opcional
+  notes        String?
+  version      Int                   @default(1)
+  status       EmployeeDocStatus     @default(PENDING)
+  uploadedById String                @map("uploaded_by_id")
+  deletedAt    DateTime?             @map("deleted_at")  // borrado lógico
+  deletedById  String?               @map("deleted_by_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+
+  employee   Employee    @relation(fields: [employeeId], references: [id])
+  storedFile StoredFile  @relation(fields: [storedFileId], references: [id])
+  uploadedBy User        @relation("DocUploadedBy", fields: [uploadedById], references: [id])
+  deletedBy  User?       @relation("DocDeletedBy", fields: [deletedById], references: [id])
+
+  @@index([employeeId, deletedAt])
+  @@index([employeeId, category])
+  @@index([employeeId, year, month])
+  @@map("employee_documents")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 3 — MENÚ DEL DÍA
+// ══════════════════════════════════════════════════════════════
+
+enum DishCategory {
+  FIRST   // Primer plato
+  SECOND  // Segundo plato
+  OTHER   // Otro (postre, bebida especial, etc.)
+
+  @@map("dish_category")
+}
+
+enum DailyMenuStatus {
+  DRAFT   // Borrador
+  ACTIVE  // Publicado/activo
+
+  @@map("daily_menu_status")
+}
+
+// ── CATÁLOGO DE PLATOS ────────────────────────────────────────
+model Dish {
+  id           String      @id @default(uuid())
+  name         String      // nombre del plato
+  category     DishCategory
+  isActive     Boolean     @default(true) @map("is_active")
+  allergens    String?     // texto libre de alérgenos opcionales
+  usageCount   Int         @default(0) @map("usage_count") // para autocompletado por frecuencia
+  createdById  String      @map("created_by_id")
+  updatedById  String      @map("updated_by_id")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  createdBy User @relation("DishCreatedBy", fields: [createdById], references: [id])
+  updatedBy User @relation("DishUpdatedBy", fields: [updatedById], references: [id])
+
+  menuItems DailyMenuDish[]
+
+  @@index([category, isActive])
+  @@index([name])
+  @@map("dishes")
+}
+
+// ── MENÚ DEL DÍA ─────────────────────────────────────────────
+model DailyMenu {
+  id           String          @id @default(uuid())
+  menuDate     DateTime        @map("menu_date") @db.Date
+  menuTitle    String          @default("MENÚ DEL DÍA") @map("menu_title") // título visible en el PDF
+  priceInCents Int             @map("price_in_cents") // precio en céntimos
+  status       DailyMenuStatus @default(DRAFT)
+  notes        String?         // notas internas
+  createdById  String          @map("created_by_id")
+  updatedById  String          @map("updated_by_id")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  createdBy User @relation("DailyMenuCreatedBy", fields: [createdById], references: [id])
+  updatedBy User @relation("DailyMenuUpdatedBy", fields: [updatedById], references: [id])
+
+  dishes DailyMenuDish[]
+  pdfs   MenuPdf[]
+
+  @@unique([menuDate, status]) // sin duplicados activos por fecha
+  @@index([menuDate])
+  @@map("daily_menus")
+}
+
+// ── PLATOS DE UN MENÚ ─────────────────────────────────────────
+model DailyMenuDish {
+  id         String       @id @default(uuid())
+  menuId     String       @map("menu_id")
+  dishId     String       @map("dish_id")
+  category   DishCategory // copia la categoría en el momento de añadir
+  position   Int          // orden dentro de su categoría
+  dishName   String       @map("dish_name") // snapshot del nombre por si el plato cambia
+
+  menu DailyMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  dish Dish      @relation(fields: [dishId], references: [id])
+
+  @@unique([menuId, dishId])
+  @@index([menuId, category, position])
+  @@map("daily_menu_dishes")
+}
+
+// ── PDFs GENERADOS DEL MENÚ ───────────────────────────────────
+model MenuPdf {
+  id          String   @id @default(uuid())
+  menuId      String   @map("menu_id")
+  storageKey  String   @map("storage_key") // clave opaca en StorageProvider
+  sizeBytes   Int      @map("size_bytes")
+  isCurrent   Boolean  @default(true) @map("is_current")
+  generatedById String @map("generated_by_id")
+  generatedAt DateTime @default(now()) @map("generated_at")
+
+  menu        DailyMenu @relation(fields: [menuId], references: [id])
+  generatedBy User      @relation("MenuPdfGeneratedBy", fields: [generatedById], references: [id])
+
+  @@index([menuId, isCurrent])
+  @@map("menu_pdfs")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 3B — MÓDULO PROVEEDORES
+// ══════════════════════════════════════════════════════════════
+
+// ── PROVEEDORES ───────────────────────────────────────────────
+model Supplier {
+  id          String    @id @default(uuid())
+  name        String
+  contactName String?   @map("contact_name")
+  email       String?
+  phone       String?
+  address     String?
+  taxId       String?   @map("tax_id")   // CIF/NIF del proveedor
+  website     String?   @map("website")
+  notes       String?
+  isActive    Boolean   @default(true) @map("is_active")
+
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  createdBy       User              @relation("SupplierCreatedBy", fields: [createdById], references: [id])
+  supplierProducts SupplierProduct[]
+  invoices        Invoice[]
+  invoiceBundles  InvoiceBundle[]
+  mayors          SupplierMayor[]
+  quarterStatuses SupplierQuarterStatus[] @relation("SupplierQuarterStatuses")
+  orders          Order[]
+
+  branch  String? @default("BOTH")  // "RESTAURANT" | "CONSTRUCTION" | "BOTH"
+  tags    SupplierTag[]
+
+  @@index([name])
+  @@index([isActive])
+  @@map("suppliers")
+}
+
+// ── ETIQUETAS DE PROVEEDORES ──────────────────────────────────
+model SupplierTag {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  color     String     @default("#6366f1")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  suppliers Supplier[]
+
+  @@map("supplier_tags")
+}
+
+// ── PRODUCTOS / REFERENCIAS ───────────────────────────────────
+// Catálogo de producto genérico (p.ej. "Aceite de oliva virgen extra")
+model Product {
+  id          String   @id @default(uuid())
+  name        String   // nombre genérico del producto
+  category    String?  // "aceites", "carnes", "lácteos", …
+  unit        String?  // unidad base para comparar (kg, L, ud)
+  notes       String?
+  isActive    Boolean  @default(true) @map("is_active")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy        User              @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  supplierProducts SupplierProduct[]
+  orderItems       OrderItem[]
+  invoiceLines     InvoiceLine[]
+
+  @@index([name])
+  @@index([category])
+  @@map("products")
+}
+
+// ── PRECIOS DE PROVEEDOR POR PRODUCTO ────────────────────────
+// Una fila = un proveedor ofrece un producto en una presentación concreta.
+// Permite comparar precio normalizado entre proveedores.
+model SupplierProduct {
+  id           String   @id @default(uuid())
+  supplierId   String   @map("supplier_id")
+  productId    String   @map("product_id")
+  // Descripción de la presentación del proveedor (p.ej. "caja 5L", "garrafa 5L", "botella 750ml")
+  presentation String
+  // Cantidad en unidades base (p.ej. 5 si son 5L)
+  quantity     Decimal  @db.Decimal(10, 4)
+  // Precio de la presentación en céntimos (evita decimales flotantes)
+  priceInCents Int      @map("price_in_cents")
+  // precio_por_unidad_base = priceInCents / quantity  (calculable)
+  currency     String   @default("EUR")
+  reference    String?  // código/referencia del proveedor
+  isActive     Boolean  @default(true) @map("is_active")
+  priceUpdatedAt DateTime? @map("price_updated_at") // última actualización de tarifa
+
+  createdById  String   @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  createdBy   User     @relation("SupplierProductCreatedBy", fields: [createdById], references: [id])
+
+  @@index([supplierId])
+  @@index([productId])
+  @@map("supplier_products")
+}
+
+// ── FACTURAS ─────────────────────────────────────────────────
+model Invoice {
+  id           String    @id @default(uuid())
+  supplierId   String    @map("supplier_id")
+  invoiceNumber String?  @map("invoice_number") // número de la factura del proveedor
+  invoiceDate  DateTime  @map("invoice_date") @db.Date
+  dueDate      DateTime? @map("due_date") @db.Date
+  totalInCents Int       @map("total_in_cents") // total en céntimos
+  taxInCents   Int?      @map("tax_in_cents")   // IVA en céntimos
+  // PDF opcional adjunto
+  storedFileId      String?  @map("stored_file_id")
+  bundleId          String?  @map("bundle_id")
+  notes             String?
+  isPaid            Boolean  @default(false) @map("is_paid")
+  paidAt            DateTime? @map("paid_at")
+  // Desglose fiscal
+  baseAmountInCents Int?     @map("base_amount_in_cents")
+  vatRate           Decimal? @map("vat_rate") @db.Decimal(5,2)
+  // OCR
+  ocrExtracted      Boolean  @default(false) @map("ocr_extracted")
+  ocrRawText        String?  @map("ocr_raw_text") @db.Text
+  deletedAt         DateTime? @map("deleted_at")
+
+  createdById  String    @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  storedFile  StoredFile? @relation("InvoiceFile", fields: [storedFileId], references: [id])
+  bundle      InvoiceBundle? @relation(fields: [bundleId], references: [id])
+  createdBy   User        @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  gestoriaItems GestoriaPackageItem[]
+  lines         InvoiceLine[]
+
+  @@index([supplierId, invoiceDate])
+  @@index([deletedAt])
+  @@index([isPaid])
+  vatLines      InvoiceVatLine[]
+
+  @@map("invoices")
+}
+
+// ── BUNDLES (escáneres con múltiples facturas) ────────────────
+model InvoiceBundle {
+  id           String    @id @default(uuid())
+  supplierId   String    @map("supplier_id")
+  description  String?
+  bundleDate   DateTime  @map("bundle_date") @db.Date
+  pageCount    Int?      @map("page_count")
+  storedFileId String    @map("stored_file_id")
+
+  createdById  String    @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  storedFile  StoredFile  @relation("BundleFile", fields: [storedFileId], references: [id])
+  createdBy   User        @relation("BundleCreatedBy", fields: [createdById], references: [id])
+  invoices    Invoice[]
+
+  @@index([supplierId, bundleDate])
+  @@map("invoice_bundles")
+}
+
+// ── PEDIDOS ───────────────────────────────────────────────────
+enum OrderStatus {
+  PENDING    // pendiente de enviar
+  SENT       // enviado al proveedor
+  RECEIVED   // recibido
+  CANCELLED  // cancelado
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  supplierId  String      @map("supplier_id")
+  orderDate   DateTime    @map("order_date") @db.Date
+  expectedDate DateTime?  @map("expected_date") @db.Date
+  receivedAt  DateTime?   @map("received_at")
+  status      OrderStatus @default(PENDING)
+  notes       String?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  createdBy   User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items       OrderItem[]
+
+  @@index([supplierId, orderDate])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String   @map("order_id")
+  productId   String   @map("product_id")
+  description String   // snapshot de la presentación / descripción libre
+  quantity    Decimal  @db.Decimal(10, 3)
+  unitPrice   Int      @map("unit_price") // precio unitario en céntimos
+  notes       String?
+
+  order    Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product  Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ── LÍNEAS DE FACTURA (detalle extraído por IA) ───────────────
+model InvoiceLine {
+  id               String   @id @default(uuid())
+  invoiceId        String   @map("invoice_id")
+  rawDescription   String   @map("raw_description")  // texto exacto del proveedor
+  quantity         Decimal? @db.Decimal(10, 3)
+  unitPriceInCents Int?     @map("unit_price_in_cents")
+  totalInCents     Int?     @map("total_in_cents")
+  productId        String?  @map("product_id")  // null hasta confirmar mapping
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+// ── DESGLOSE IVA POR FACTURA (múltiples tipos en una misma factura) ──────────
+model InvoiceVatLine {
+  id                String  @id @default(uuid())
+  invoiceId         String  @map("invoice_id")
+  vatRate           Decimal @map("vat_rate") @db.Decimal(5,2)   // 4.00 | 10.00 | 21.00
+  baseAmountInCents Int     @map("base_amount_in_cents")
+  taxInCents        Int     @map("tax_in_cents")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_vat_lines")
+}
+
+
+
+
+// ══════════════════════════════════════════════════════════════
+// FASE 4 — GESTORÍA (control de envíos trimestrales)
+// ══════════════════════════════════════════════════════════════
+
+enum GestoriaStatus {
+  DRAFT     // en preparación
+  SENT      // enviado a la gestora
+  CONFIRMED // confirmado recibido por la gestora
+
+  @@map("gestoria_status")
+}
+
+// ── PAQUETES DE GESTORÍA ──────────────────────────────────────
+// Un paquete = conjunto de facturas de un trimestre enviadas a la gestora.
+model GestoriaPackage {
+  id          String         @id @default(uuid())
+  year        Int
+  quarter     Int            // 1-4
+  description String?
+  status      GestoriaStatus @default(DRAFT)
+  sentAt      DateTime?      @map("sent_at")
+  confirmedAt DateTime?      @map("confirmed_at")
+  notes       String?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User                  @relation("GestoriaPackageCreatedBy", fields: [createdById], references: [id])
+  items     GestoriaPackageItem[]
+
+  @@index([year, quarter])
+  @@map("gestoria_packages")
+}
+
+// ── FACTURAS EN UN PAQUETE ────────────────────────────────────
+model GestoriaPackageItem {
+  id        String   @id @default(uuid())
+  packageId String   @map("package_id")
+  invoiceId String   @map("invoice_id")
+  addedAt   DateTime @default(now()) @map("added_at")
+
+  package GestoriaPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  invoice Invoice         @relation(fields: [invoiceId], references: [id])
+
+  @@unique([packageId, invoiceId])
+  @@index([packageId])
+  @@map("gestoria_package_items")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 4B — RECONCILIACIÓN (mayor del proveedor)
+// ══════════════════════════════════════════════════════════════
+
+// ── MAYOR DEL PROVEEDOR ───────────────────────────────────────
+// Documento contable (PDF/Excel/imagen) que el proveedor emite
+// listando las facturas del trimestre desde su perspectiva.
+// Se extrae su contenido via Claude API y se almacena el resultado.
+model SupplierMayor {
+  id           String   @id @default(uuid())
+  supplierId   String   @map("supplier_id")
+  year         Int
+  quarter      Int      // 1-4
+  storedFileId String   @map("stored_file_id")
+  // Datos extraídos por Claude: [{invoiceNumber, amountInCents, invoiceDate?}]
+  extractedLines Json   @map("extracted_lines")
+  notes        String?
+  createdById  String   @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  storedFile  StoredFile  @relation("MayorFile", fields: [storedFileId], references: [id])
+  createdBy   User        @relation("MayorCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([supplierId, year, quarter])
+  @@index([supplierId, year, quarter])
+  @@map("supplier_mayors")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FASE 5 — ESTADO DE TRIMESTRE POR PROVEEDOR
+// ══════════════════════════════════════════════════════════════
+
+// Seguimiento del workflow trimestral para cada proveedor:
+// Mayor solicitado → Mayor recibido → Facturas revisadas
+// → Enviado a gestoría → Trimestre cerrado
+model SupplierQuarterStatus {
+  id          String   @id @default(uuid())
+  supplierId  String   @map("supplier_id")
+  year        Int
+  quarter     Int      // 1-4
+
+  // Paso 1: solicitar el mayor al proveedor
+  mayorRequested    Boolean   @default(false) @map("mayor_requested")
+  mayorRequestedAt  DateTime? @map("mayor_requested_at")
+
+  // Paso 2: mayor recibido (se infiere de SupplierMayor existente,
+  //          pero se puede marcar manualmente si lo reciben en papel)
+  mayorReceived     Boolean   @default(false) @map("mayor_received")
+  mayorReceivedAt   DateTime? @map("mayor_received_at")
+
+  // Paso 3: facturas comparadas / reconciliadas con el mayor
+  reconciled        Boolean   @default(false)
+  reconciledAt      DateTime? @map("reconciled_at")
+
+  // Paso 4: enviado a gestoría
+  sentToAccountant    Boolean   @default(false) @map("sent_to_accountant")
+  sentToAccountantAt  DateTime? @map("sent_to_accountant_at")
+
+  // Paso 5: trimestre cerrado
+  closed    Boolean   @default(false)
+  closedAt  DateTime? @map("closed_at")
+
+  notes       String?
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  supplier  Supplier @relation("SupplierQuarterStatuses", fields: [supplierId], references: [id])
+  updatedBy User?    @relation("QuarterStatusUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([supplierId, year, quarter])
+  @@index([supplierId])
+  @@map("supplier_quarter_statuses")
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// FASE 6 — FACTURAS EMITIDAS
+// ══════════════════════════════════════════════════════════════
+
+enum IssuedInvoiceStatus {
+  ACTIVE
+  VOIDED
+  REPLACED
+
+  @@map("issued_invoice_status")
+}
+
+model IssuedInvoice {
+  id            String              @id @default(uuid())
+  invoiceNumber String              @map("invoice_number")
+  issueDate     DateTime            @map("issue_date") @db.Date
+  status        IssuedInvoiceStatus @default(ACTIVE)
+  rectifiesId   String?             @map("rectifies_id")
+  clientName    String              @map("client_name")
+  clientNif     String?             @map("client_nif")
+  clientAddress String?             @map("client_address")
+  clientPhone   String?             @map("client_phone")
+  clientEmail   String?             @map("client_email")
+  baseInCents   Int                 @map("base_in_cents")
+  vatInCents    Int                 @map("vat_in_cents")
+  totalInCents  Int                 @map("total_in_cents")
+  notes         String?
+  voidReason    String?             @map("void_reason")
+  createdById   String              @map("created_by_id")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  createdBy   User            @relation("IssuedInvoiceCreatedBy", fields: [createdById], references: [id])
+  rectifies   IssuedInvoice?  @relation("Rectification", fields: [rectifiesId], references: [id])
+  rectifiedBy IssuedInvoice[] @relation("Rectification")
+  lines       IssuedInvoiceLine[]
+
+  @@index([issueDate])
+  @@index([status])
+  @@index([invoiceNumber])
+  @@map("issued_invoices")
+}
+
+model IssuedInvoiceLine {
+  id               String  @id @default(uuid())
+  invoiceId        String  @map("invoice_id")
+  position         Int
+  description      String
+  quantity         Decimal @db.Decimal(10, 3)
+  unitPriceInCents Int     @map("unit_price_in_cents")
+  vatRate          Decimal @map("vat_rate") @db.Decimal(5, 2)
+
+  invoice IssuedInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, position])
+  @@map("issued_invoice_lines")
+}
+
+// ── DISMISSED ALERTS ─────────────────────────────────────────
+model DismissedAlert {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  alertId     String   @map("alert_id")
+  dismissedAt DateTime @default(now()) @map("dismissed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alertId])
+  @@map("dismissed_alerts")
+}

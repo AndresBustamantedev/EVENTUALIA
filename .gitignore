@@ -1,0 +1,42 @@
+# Dependencias
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+
+# Build
+dist/
+build/
+
+# Variables de entorno — NUNCA subir al repositorio
+.env
+.env.*
+!.env.example
+
+# Prisma
+prisma/migrations/dev.db
+
+# Testing
+coverage/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Datos locales (no código)
+data/
+backups/

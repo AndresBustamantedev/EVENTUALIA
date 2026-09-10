@@ -1,0 +1,30 @@
+# ============================================================
+# Override de producción — usar junto con docker-compose.yml
+# Requiere D:\CruzBlancaDatos\postgres y D:\CruzBlancaDatos\documents
+# creados previamente en el PC del restaurante.
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# ============================================================
+services:
+  app:
+    restart: always
+    environment:
+      NODE_ENV: production
+
+volumes:
+  pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      # Configurar PGDATA_PATH en .env, p.ej: D:\CruzBlancaDatos\postgres
+      device: ${PGDATA_PATH}
+
+  documents:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      # Configurar DOCUMENTS_PATH en .env, p.ej: D:\CruzBlancaDatos\documents
+      device: ${DOCUMENTS_PATH}

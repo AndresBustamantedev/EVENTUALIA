@@ -1,0 +1,47 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    env_file: .env
+    environment:
+      # Sobreescribir host de BD para usar el servicio de Docker
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-cruzblanca}:${POSTGRES_PASSWORD:-cambia_password}@db:5432/${POSTGRES_DB:-cruzblanca}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - documents:/app/data/documents
+
+  db:
+    image: postgres:16-alpine
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cruzblanca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambia_password}
+      POSTGRES_DB: ${POSTGRES_DB:-cruzblanca}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-cruzblanca} -d ${POSTGRES_DB:-cruzblanca}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  # Volúmenes con nombre para desarrollo (datos en Docker)
+  pgdata:
+  documents:
+
+# ============================================================
+# PRODUCCIÓN (D:\CruzBlancaDatos\)
+# Usar: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# ============================================================

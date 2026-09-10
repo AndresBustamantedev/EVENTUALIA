@@ -1,0 +1,27 @@
+# Node — se instala dentro del container con npm ci
+node_modules
+npm-debug.log*
+
+# Next.js build output
+.next
+out
+
+# Variables de entorno locales (el container usa su propio .env via env_file)
+.env*.local
+
+# Git
+.git
+.gitignore
+
+# Editor / OS
+.DS_Store
+*.log
+.vscode
+.idea
+
+# Tests y cobertura
+coverage
+__tests__
+*.test.ts
+*.test.tsx
+*.spec.ts

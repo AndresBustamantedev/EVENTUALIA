@@ -1,0 +1,93 @@
+"use client";
+
+import { useActionState, useEffect, useState } from "react";
+import type { BundleFormState } from "../types";
+
+const INPUT_CLASS = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60";
+const LABEL_CLASS = "block text-sm font-medium mb-1";
+const ERROR_CLASS = "mt-1 text-xs text-destructive";
+
+interface Props {
+  supplierId: string;
+  action: (prev: BundleFormState, formData: FormData) => Promise<BundleFormState>;
+  onSuccess?: () => void;
+}
+
+export function BundleUploadForm({ supplierId, action, onSuccess }: Props) {
+  const [state, formAction, isPending] = useActionState(action, {});
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    if (state.success) {
+      setKey((k) => k + 1);
+      onSuccess?.();
+    }
+  }, [state.success, onSuccess]);
+
+  const fe = state.fieldErrors ?? {};
+  const fieldError = (f: string) =>
+    fe[f]?.[0] ? <p className={ERROR_CLASS}>{fe[f][0]}</p> : null;
+
+  return (
+    <form key={key} action={formAction} className="space-y-4">
+      <input type="hidden" name="supplierId" value={supplierId} />
+
+      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+      {state.success && (
+        <p className="text-sm text-green-600 dark:text-green-400">
+          Escáner registrado. Ahora puedes añadir las facturas individuales desde la tabla inferior.
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label htmlFor="bundleDate" className={LABEL_CLASS}>
+            Fecha del escáner <span className="text-destructive">*</span>
+          </label>
+          <input
+            id="bundleDate" name="bundleDate" type="date"
+            required disabled={isPending} className={INPUT_CLASS}
+          />
+          {fieldError("bundleDate")}
+        </div>
+
+        <div>
+          <label htmlFor="pageCount" className={LABEL_CLASS}>Nº de páginas / facturas</label>
+          <input
+            id="pageCount" name="pageCount" type="number" min="1"
+            disabled={isPending} className={INPUT_CLASS} placeholder="ej: 12"
+          />
+        </div>
+
+        <div className="sm:col-span-2">
+          <label htmlFor="bundleDesc" className={LABEL_CLASS}>Descripción (opcional)</label>
+          <input
+            id="bundleDesc" name="description" type="text"
+            disabled={isPending} className={INPUT_CLASS}
+            placeholder="ej: Facturas semana 20-24 enero"
+          />
+        </div>
+
+        <div className="sm:col-span-2">
+          <label htmlFor="bundleFile" className={LABEL_CLASS}>
+            PDF del escáner <span className="text-destructive">*</span>
+          </label>
+          <input
+            id="bundleFile" name="file" type="file"
+            accept=".pdf,application/pdf"
+            required disabled={isPending}
+            className="w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary hover:file:bg-primary/20"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">Solo PDF · máx. 100 MB</p>
+        </div>
+      </div>
+
+      <button
+        type="submit" disabled={isPending}
+        className="rounded-md bg-primary px-5 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+      >
+        {isPending ? "Subiendo…" : "Guardar escáner múltiple"}
+      </button>
+    </form>
+  );
+}
