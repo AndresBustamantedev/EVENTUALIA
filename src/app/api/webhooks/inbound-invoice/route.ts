@@ -1,14 +1,17 @@
 /**
  * POST /api/webhooks/inbound-invoice
  *
- * Recibe emails entrantes de Resend Inbound Email.
- * Para cada adjunto PDF: almacena el archivo, extrae datos con IA
- * y crea la factura en el bucket "Sin asignar".
+ * Recibe el evento `email.received` de Resend Inbound Email.
+ * Para cada adjunto PDF:
+ *   1. Descarga el contenido vía la API de Resend (los adjuntos NO vienen en el payload)
+ *   2. Valida el archivo, detecta duplicados por SHA-256
+ *   3. Almacena el PDF y extrae campos con IA
+ *   4. Crea la factura en el bucket "Sin asignar"
  *
  * Seguridad:
- *   - Endpoint público (sin sesión) pero protegido con un secreto en la URL.
- *   - Sólo procesa archivos que pasen la validación de tipo MIME.
- *   - Detecta duplicados por SHA-256 para evitar facturas repetidas.
+ *   - Endpoint público protegido con secreto en query param (?secret=…)
+ *   - Solo procesa archivos que pasen validación de tipo MIME
+ *   - Detecta duplicados por SHA-256 para evitar facturas repetidas
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
@@ -24,7 +27,7 @@ const UNASSIGNED_NAME = "Sin asignar";
 
 async function getOrCreateUnassignedSupplierId(actorId: string): Promise<string> {
   const existing = await (prisma as any).supplier.findFirst({
-    where: { name: UNASSIGNED_NAME, isActive: false },
+    where:  { name: UNASSIGNED_NAME, isActive: false },
     select: { id: true },
   });
   if (existing) return existing.id;
@@ -41,22 +44,55 @@ async function getOrCreateUnassignedSupplierId(actorId: string): Promise<string>
   return s.id;
 }
 
-// ── Payload de Resend Inbound Email ─────────────────────────────────────────
-// https://resend.com/docs/api-reference/inbound/introduction
+// ── Tipos del payload de Resend ──────────────────────────────────────────────
 
-interface ResendAttachment {
-  filename?:    string;
-  content:      string;          // base64
-  contentType?: string;
+interface ResendEmailReceivedData {
+  email_id:   string;
+  from:       string;
+  to:         string[];
+  subject?:   string;
+  created_at: string;
 }
 
-interface ResendInboundPayload {
-  from?:        string;
-  to?:          string[];
-  subject?:     string;
-  text?:        string;
-  html?:        string;
-  attachments?: ResendAttachment[];
+interface ResendWebhookEvent {
+  type:       string;
+  created_at: string;
+  data:       ResendEmailReceivedData;
+}
+
+interface ResendAttachmentMeta {
+  id:           string;
+  filename:     string;
+  content_type: string;
+  size:         number;
+  download_url: string;
+}
+
+// ── Helper: llama a la API de Resend ────────────────────────────────────────
+
+async function fetchResendAttachments(emailId: string): Promise<ResendAttachmentMeta[]> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) throw new Error("RESEND_API_KEY no configurada");
+
+  const res = await fetch(`https://api.resend.com/emails/${emailId}/attachments`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Resend API error ${res.status}: ${text}`);
+  }
+
+  const json = await res.json();
+  // La respuesta es { data: [...] }
+  return (json.data ?? json) as ResendAttachmentMeta[];
+}
+
+async function downloadAttachment(downloadUrl: string): Promise<Buffer> {
+  const res = await fetch(downloadUrl);
+  if (!res.ok) throw new Error(`Error descargando adjunto: HTTP ${res.status}`);
+  const arrayBuf = await res.arrayBuffer();
+  return Buffer.from(arrayBuf);
 }
 
 // ── Route handler ────────────────────────────────────────────────────────────
@@ -69,26 +105,41 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 2. Parsear body JSON de Resend
-  let body: ResendInboundPayload;
+  let event: ResendWebhookEvent;
   try {
-    body = await req.json();
+    event = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const attachments = body.attachments ?? [];
-  const pdfAttachments = attachments.filter(a =>
-    a.contentType?.toLowerCase().includes("pdf") ||
+  // Solo procesamos el evento email.received
+  if (event.type !== "email.received") {
+    return NextResponse.json({ ok: true, skipped: "event_type_ignored" });
+  }
+
+  const { email_id, from: fromEmail, subject } = event.data;
+
+  // 3. Obtener lista de adjuntos vía API de Resend
+  let attachmentsMeta: ResendAttachmentMeta[];
+  try {
+    attachmentsMeta = await fetchResendAttachments(email_id);
+  } catch (err: any) {
+    console.error("[inbound-invoice] Error obteniendo adjuntos:", err);
+    return NextResponse.json({ error: err?.message ?? "Error API Resend" }, { status: 502 });
+  }
+
+  const pdfMetas = attachmentsMeta.filter(a =>
+    a.content_type?.toLowerCase().includes("pdf") ||
     a.filename?.toLowerCase().endsWith(".pdf")
   );
 
-  if (pdfAttachments.length === 0) {
-    // Email sin PDF adjunto — confirmamos recepción para que Resend no reintente
+  if (pdfMetas.length === 0) {
     return NextResponse.json({ ok: true, processed: 0, skipped: "no_pdf" });
   }
 
-  // 3. Encontrar un actor del sistema (primer usuario creado = administrador)
+  // 4. Encontrar actor del sistema (primer usuario activo = administrador)
   const actor = await (prisma as any).user.findFirst({
+    where:   { isActive: true },
     orderBy: { createdAt: "asc" },
     select:  { id: true },
   });
@@ -96,19 +147,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "No system user found" }, { status: 500 });
   }
 
-  // 4. Obtener proveedor "Sin asignar"
+  // 5. Obtener proveedor "Sin asignar"
   const supplierId = await getOrCreateUnassignedSupplierId(actor.id);
-  const fromEmail  = body.from ?? "desconocido";
 
   let processed = 0;
   const errors: string[] = [];
 
-  // 5. Procesar cada PDF
-  for (const att of pdfAttachments) {
-    const filename = att.filename ?? `inbound-${Date.now()}.pdf`;
+  // 6. Procesar cada PDF
+  for (const meta of pdfMetas) {
+    const filename = meta.filename ?? `inbound-${Date.now()}.pdf`;
 
     try {
-      const buf = Buffer.from(att.content, "base64");
+      // Descargar contenido del adjunto
+      const buf = await downloadAttachment(meta.download_url);
 
       // Validar MIME real
       const validation = validateDocumentBuffer(buf, filename);
@@ -165,6 +216,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const aggTax   = vatLines.length > 0 ? vatLines.reduce((s, v) => s + v.taxInCents,        0) : (fields.vatAmountInCents ?? null);
       const aggRate  = vatLines.length > 1  ? null : (fields.vatRate ?? null);
 
+      const notes = [
+        `Recibido por email de: ${fromEmail}`,
+        subject ? `Asunto: ${subject}` : null,
+      ].filter(Boolean).join(" · ");
+
       // Crear factura en "Sin asignar"
       await (prisma as any).invoice.create({
         data: {
@@ -177,7 +233,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           vatRate:           aggRate,
           isPaid:            false,
           ocrExtracted:      true,
-          notes:             `Recibido por email de: ${fromEmail}`,
+          notes,
           storedFileId,
           createdById:       actor.id,
           ...(vatLines.length > 0 ? {
@@ -198,7 +254,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 6. Invalidar caché para que aparezca en /invoices inmediatamente
+  // 7. Invalidar caché
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${supplierId}`);
 
