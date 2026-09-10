@@ -296,14 +296,32 @@ export async function getOrCreateUnassignedSupplier(): Promise<string> {
   });
   if (existing) return existing.id;
 
-  // Create lazily — needs a createdById, so use the current actor
+  // Verificar que actor.id existe realmente en la DB.
+  // En PC2 puede haber un ID de sesión antigua (de PC1) cuyo usuario ya no existe.
+  // En ese caso usamos el primer usuario activo como fallback seguro.
+  let createdById = actor.id;
+  const actorInDb = await (prisma as any).user.findUnique({
+    where:  { id: actor.id },
+    select: { id: true },
+  });
+  if (!actorInDb) {
+    const fallback = await (prisma as any).user.findFirst({
+      where:   { isActive: true },
+      select:  { id: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!fallback) throw new Error("No hay usuarios activos en la base de datos");
+    createdById = fallback.id;
+  }
+
+  // Create lazily — proveedor especial del sistema
   const supplier = await (prisma as any).supplier.create({
     data: {
       name:        UNASSIGNED_SUPPLIER_NAME,
       isActive:    false,
       branch:      "BOTH",
       notes:       "Proveedor especial del sistema. Facturas importadas sin proveedor conocido.",
-      createdById: actor.id,
+      createdById,
     },
   });
   return supplier.id;
