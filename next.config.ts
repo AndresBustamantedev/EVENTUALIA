@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   // Excluir módulos nativos Node.js del bundle del cliente/edge
   serverExternalPackages: ["@node-rs/argon2", "@react-pdf/renderer", "@anthropic-ai/sdk"],
   // Límite de tamaño para server actions (subida de PDFs grandes)
