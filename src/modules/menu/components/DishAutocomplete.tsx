@@ -166,8 +166,8 @@ export function DishAutocomplete({
         <ul
           ref={listRef}
           role="listbox"
-          className="absolute left-0 top-full z-50 mt-1 w-full rounded-md border border-input bg-popover
-                     shadow-md max-h-52 overflow-y-auto"
+          className="absolute left-0 top-full z-50 mt-1 w-full rounded-md border border-input bg-card text-card-foreground
+                     shadow-lg max-h-52 overflow-y-auto"
         >
           <li className="px-3 py-1.5 text-xs text-muted-foreground border-b border-input select-none">
             Sugerencias del catálogo — haz clic o usa ↑↓ + Enter

@@ -86,12 +86,20 @@ async function _computeAllAlerts(): Promise<{ alerts: AppAlert[]; dismissedIds: 
     select: { id: true, supplierId: true, _count: { select: { invoices: { where: { deletedAt: null } } } } },
   });
   const emptyBundles = (bundles as any[]).filter(b => b._count.invoices === 0);
-  if (emptyBundles.length > 0) alerts.push({
-    id: "empty_bundles", level: "warning", icon: "📁",
-    title:  `${emptyBundles.length} escáner${emptyBundles.length !== 1 ? "es" : ""} sin facturas extraídas`,
-    detail: "Subidos hace más de 24h sin ninguna factura registrada.",
-    count:  emptyBundles.length, href: "/invoices?alert=empty_bundles",
-  });
+  if (emptyBundles.length > 0) {
+    // Si hay un solo bundle vacío, enlazar directo al proveedor donde se ve el escáner.
+    // Si hay varios, enlazar al primero (los demás aparecen en sus propias páginas).
+    const targetSupplierId = emptyBundles[0].supplierId as string;
+    const href = `/invoices/${targetSupplierId}`;
+    alerts.push({
+      id: "empty_bundles", level: "warning", icon: "📁",
+      title:  `${emptyBundles.length} escáner${emptyBundles.length !== 1 ? "es" : ""} sin facturas extraídas`,
+      detail: emptyBundles.length === 1
+        ? "Subido hace más de 24h sin ninguna factura registrada. Ábrelo y extrae las facturas."
+        : `${emptyBundles.length} escáneres subidos hace más de 24h sin facturas. Revisa cada proveedor.`,
+      count: emptyBundles.length, href,
+    });
+  }
 
   // ── 4. Proveedores sin factura en los últimos 90 días ────────
   const activeSuppliers = await (prisma as any).supplier.findMany({
