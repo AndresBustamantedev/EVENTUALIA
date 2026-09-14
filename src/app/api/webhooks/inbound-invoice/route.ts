@@ -5,10 +5,13 @@
  * Para cada adjunto PDF:
  *   1. Llama a GET /emails/receiving/{email_id}/attachments/{attachment_id}
  *      para obtener la URL firmada (download_url) del adjunto
- *   2. Descarga el PDF desde esa URL
- *   3. Valida el archivo, detecta duplicados por SHA-256
- *   4. Almacena el PDF y extrae campos con IA
- *   5. Crea la factura en el bucket "Sin asignar"
+ *   2. Descarga el PDF
+ *   3. Extrae campos con IA (número, fecha, total, desglose IVA, CIF del emisor)
+ *   4. Resuelve el proveedor:
+ *        a) CIF encontrado en BD → asignar directamente
+ *        b) CIF nuevo → crear proveedor inactivo (pendiente de revisión)
+ *        c) Sin CIF → bucket "Sin asignar"
+ *   5. Crea la factura con desglose de IVA completo
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
@@ -18,9 +21,11 @@ import { storeFile } from "@/core/storage/StorageProvider";
 import { validateDocumentBuffer, sanitizeFilename, sha256Hex } from "@/modules/hr/lib/documentUtils";
 import { extractInvoiceFields } from "@/lib/ocr/extractInvoiceFields";
 
-// ── Helper: proveedor "Sin asignar" ─────────────────────────────────────────
+// ── Constantes del sistema ───────────────────────────────────────────────────
 
 const UNASSIGNED_NAME = "Sin asignar";
+
+// ── Helper: proveedor "Sin asignar" ─────────────────────────────────────────
 
 async function getOrCreateUnassignedSupplierId(actorId: string): Promise<string> {
   const existing = await (prisma as any).supplier.findFirst({
@@ -39,6 +44,53 @@ async function getOrCreateUnassignedSupplierId(actorId: string): Promise<string>
     },
   });
   return s.id;
+}
+
+// ── Helper: resolución de proveedor por CIF ──────────────────────────────────
+//
+// Prioridad:
+//   1. CIF extraído → buscar en BD por taxId → asignar si existe
+//   2. CIF extraído pero no existe → crear proveedor inactivo (pendiente revisión)
+//   3. Sin CIF → "Sin asignar"
+
+async function resolveSupplier(
+  supplierCif:  string | null | undefined,
+  supplierName: string | null | undefined,
+  actorId:      string,
+): Promise<string> {
+  if (supplierCif) {
+    // Normalizar: eliminar guiones y espacios, uppercase
+    const normalizedCif = supplierCif.replace(/[-\s]/g, "").toUpperCase();
+
+    const existing = await (prisma as any).supplier.findFirst({
+      where:  { taxId: normalizedCif },
+      select: { id: true, name: true, isActive: true },
+    });
+
+    if (existing) {
+      console.log(`[inbound-invoice] Proveedor encontrado por CIF ${normalizedCif}: ${existing.name} (activo: ${existing.isActive})`);
+      return existing.id;
+    }
+
+    // No existe → crear proveedor inactivo pendiente de revisión
+    const name = (supplierName?.trim()) || `Proveedor ${normalizedCif}`;
+    const newSupplier = await (prisma as any).supplier.create({
+      data: {
+        name,
+        taxId:       normalizedCif,
+        isActive:    false,
+        branch:      "BOTH",
+        notes:       "Creado automáticamente desde factura recibida por email. Pendiente de verificación.",
+        createdById: actorId,
+      },
+    });
+    console.log(`[inbound-invoice] Proveedor creado (inactivo) para CIF ${normalizedCif}: ${name}`);
+    return newSupplier.id;
+  }
+
+  // Sin CIF → "Sin asignar"
+  console.log(`[inbound-invoice] Sin CIF extraído → usando bucket "Sin asignar"`);
+  return getOrCreateUnassignedSupplierId(actorId);
 }
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
@@ -70,12 +122,7 @@ interface ResendWebhookEvent {
   data:       ResendEmailData;
 }
 
-// ── Obtener URL firmada de descarga para un adjunto concreto ──────────────────
-//
-// Endpoint correcto para email RECIBIDOS (inbound):
-//   GET https://api.resend.com/emails/receiving/{email_id}/attachments/{attachment_id}
-//
-// NOTA: GET /emails/{id} es sólo para emails enviados → siempre 404 aquí.
+// ── Obtener URL firmada de descarga para un adjunto ──────────────────────────
 
 async function getAttachmentDownloadUrl(
   emailId:      string,
@@ -110,9 +157,7 @@ async function getAttachmentDownloadUrl(
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
 
-  // Log básico para trazabilidad
-  console.log("[inbound-invoice] Headers:", JSON.stringify(Object.fromEntries(req.headers)));
-  console.log("[inbound-invoice] Body (primeros 1000 chars):", rawBody.slice(0, 1000));
+  console.log("[inbound-invoice] Body (primeros 800 chars):", rawBody.slice(0, 800));
 
   // Parsear JSON
   let event: ResendWebhookEvent;
@@ -129,7 +174,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const { email_id, from: fromEmail, subject } = event.data;
   const payloadAttachments: ResendAttachmentMeta[] = event.data.attachments ?? [];
 
-  console.log(`[inbound-invoice] email_id=${email_id} | adjuntos recibidos:`, JSON.stringify(payloadAttachments));
+  console.log(`[inbound-invoice] email_id=${email_id} | adjuntos: ${payloadAttachments.length}`);
 
   // Filtrar PDFs del payload
   const pdfMetas = payloadAttachments.filter(a =>
@@ -141,7 +186,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true, processed: 0, skipped: "no_pdf" });
   }
 
-  // Actor del sistema
+  // Actor del sistema (primer usuario activo)
   const actor = await (prisma as any).user.findFirst({
     where:   { isActive: true },
     orderBy: { createdAt: "asc" },
@@ -151,8 +196,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "No system user found" }, { status: 500 });
   }
 
-  const supplierId = await getOrCreateUnassignedSupplierId(actor.id);
-
   let processed = 0;
   const errors: string[] = [];
 
@@ -161,14 +204,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     try {
       // ── 1. Obtener URL firmada del adjunto ───────────────────────────────
-      let downloadUrl: string | null = null;
-
-      if (att.id) {
-        downloadUrl = await getAttachmentDownloadUrl(email_id, att.id);
+      if (!att.id) {
+        errors.push(`${filename}: adjunto sin id en el payload`);
+        continue;
       }
 
+      const downloadUrl = await getAttachmentDownloadUrl(email_id, att.id);
       if (!downloadUrl) {
-        errors.push(`${filename}: no se pudo obtener download_url del adjunto (id=${att.id ?? "sin id"})`);
+        errors.push(`${filename}: no se pudo obtener download_url (id=${att.id})`);
         continue;
       }
 
@@ -219,23 +262,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         storedFileId = sf.id;
       }
 
-      // ── 6. Extracción IA ─────────────────────────────────────────────────
+      // ── 6. Extracción IA (campos + CIF del emisor + desglose IVA) ────────
       let fields: Awaited<ReturnType<typeof extractInvoiceFields>> = {};
       try {
         fields = await extractInvoiceFields(buf, "application/pdf");
-      } catch { /* fallback silencioso */ }
+        console.log(`[inbound-invoice] IA extraído: CIF=${fields.supplierCif ?? "—"} nombre=${fields.supplierName ?? "—"} vatLines=${fields.vatLines?.length ?? 0}`);
+      } catch (ocrErr: any) {
+        console.warn(`[inbound-invoice] OCR falló (${filename}): ${ocrErr?.message}`);
+      }
 
+      // ── 7. Resolver proveedor por CIF ────────────────────────────────────
+      const supplierId = await resolveSupplier(fields.supplierCif, fields.supplierName, actor.id);
+
+      // ── 8. Calcular totales IVA ──────────────────────────────────────────
       const vatLines = fields.vatLines ?? [];
-      const aggBase  = vatLines.length > 0 ? vatLines.reduce((s, v) => s + v.baseAmountInCents, 0) : (fields.baseAmountInCents ?? null);
-      const aggTax   = vatLines.length > 0 ? vatLines.reduce((s, v) => s + v.taxInCents,        0) : (fields.vatAmountInCents ?? null);
-      const aggRate  = vatLines.length > 1  ? null : (fields.vatRate ?? null);
+      const aggBase  = vatLines.length > 0
+        ? vatLines.reduce((s, v) => s + v.baseAmountInCents, 0)
+        : (fields.baseAmountInCents ?? null);
+      const aggTax   = vatLines.length > 0
+        ? vatLines.reduce((s, v) => s + v.taxInCents, 0)
+        : (fields.vatAmountInCents ?? null);
+      const aggRate  = vatLines.length === 1 ? (fields.vatRate ?? vatLines[0].vatRate) : null;
 
       const notes = [
         `Recibido por email de: ${fromEmail}`,
         subject ? `Asunto: ${subject}` : null,
       ].filter(Boolean).join(" · ");
 
-      // ── 7. Crear factura ─────────────────────────────────────────────────
+      // ── 9. Crear factura ─────────────────────────────────────────────────
       await (prisma as any).invoice.create({
         data: {
           supplierId,
@@ -247,6 +301,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           vatRate:           aggRate,
           isPaid:            false,
           ocrExtracted:      true,
+          pendingReview:     true,
           notes,
           storedFileId,
           createdById:       actor.id,
@@ -262,7 +317,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         },
       });
 
-      console.log(`[inbound-invoice] ✅ Factura creada para ${filename}`);
+      console.log(`[inbound-invoice] ✅ Factura creada para ${filename} → supplierId=${supplierId}`);
       processed++;
     } catch (err: any) {
       console.error(`[inbound-invoice] Error procesando ${filename}:`, err);
@@ -271,7 +326,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   revalidatePath("/invoices");
-  revalidatePath(`/invoices/${supplierId}`);
+  revalidatePath("/suppliers");
 
   return NextResponse.json({ ok: true, processed, errors });
 }

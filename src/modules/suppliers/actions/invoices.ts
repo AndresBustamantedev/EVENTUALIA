@@ -47,6 +47,7 @@ function mapInvoice(inv: any): InvoiceRow {
     gestoriaPackageYear:    gestoriaPkg?.year ?? null,
     gestoriaPackageQuarter: gestoriaPkg?.quarter ?? null,
     gestoriaStatus:         (gestoriaPkg?.status as "SENT" | "CONFIRMED" | null) ?? null,
+    pendingReview:          inv.pendingReview ?? false,
   };
 }
 
@@ -186,6 +187,21 @@ export async function createInvoiceAction(
       } : {}),
     },
   });
+
+  // Auto-activar proveedor si la factura es reciente (últimos 3 meses) y estaba inactivo
+  const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  if (new Date(d.invoiceDate) >= threeMonthsAgo) {
+    const sup = await (prisma as any).supplier.findUnique({
+      where:  { id: d.supplierId },
+      select: { isActive: true, name: true },
+    });
+    if (sup && !sup.isActive && sup.name !== "Sin asignar") {
+      await (prisma as any).supplier.update({
+        where: { id: d.supplierId },
+        data:  { isActive: true },
+      });
+    }
+  }
 
   revalidatePath(`/suppliers/${d.supplierId}`);
   return { success: true, invoiceId: invoice.id };
@@ -419,11 +435,47 @@ export async function reassignInvoiceAction(
 
   await (prisma as any).invoice.update({
     where: { id: invoiceId },
-    data: { supplierId: newSupplierId },
+    data: { supplierId: newSupplierId, pendingReview: false },
   });
 
   revalidatePath(`/invoices`);
   revalidatePath(`/invoices/${inv.supplierId}`);
   revalidatePath(`/invoices/${newSupplierId}`);
   return { success: true };
+}
+
+// ── Aceptar factura por revisión ────────────────────────────────────────────
+
+export async function acceptInvoiceAction(
+  invoiceId: string
+): Promise<{ error?: string; success?: boolean }> {
+  try { await requirePermission("suppliers:write"); }
+  catch { return { error: "Sin permiso." }; }
+
+  const inv = await (prisma as any).invoice.findUnique({
+    where:  { id: invoiceId },
+    select: { supplierId: true, deletedAt: true },
+  });
+  if (!inv || inv.deletedAt) return { error: "Factura no encontrada." };
+
+  await (prisma as any).invoice.update({
+    where: { id: invoiceId },
+    data:  { pendingReview: false },
+  });
+
+  revalidatePath("/invoices");
+  revalidatePath(`/invoices/${inv.supplierId}`);
+  return { success: true };
+}
+
+// ── Listar facturas pendientes de revisión ──────────────────────────────────
+
+export async function listPendingReviewInvoices(): Promise<InvoiceRow[]> {
+  await requirePermission("suppliers:read");
+  const rows = await (prisma as any).invoice.findMany({
+    where:   { pendingReview: true, deletedAt: null },
+    include: INVOICE_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
+  return (rows as any[]).map(mapInvoice);
 }

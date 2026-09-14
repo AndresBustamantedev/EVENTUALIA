@@ -6,7 +6,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requirePermission, ForbiddenError } from "@/core/auth/session";
 import { listSuppliers, getOrCreateUnassignedSupplier } from "@/modules/suppliers/actions/suppliers";
-import { listInvoices } from "@/modules/suppliers/actions/invoices";
+import { listInvoices, listPendingReviewInvoices } from "@/modules/suppliers/actions/invoices";
 import { getAlerts, getDismissedAlerts } from "@/modules/suppliers/actions/alerts";
 import { InvoicesIndexClient } from "@/modules/suppliers/components/InvoicesIndexClient";
 
@@ -23,9 +23,10 @@ export default async function InvoicesPage() {
 
   const canWrite = actor.role === "ADMIN" || actor.role === "ENCARGADO";
 
-  const [suppliers, allInvoices, alerts, dismissedAlerts, unassignedSupplierId] = await Promise.all([
+  const [suppliers, allInvoices, pendingReviewInvoices, alerts, dismissedAlerts, unassignedSupplierId] = await Promise.all([
     listSuppliers(),
     listInvoices(),
+    listPendingReviewInvoices(),
     getAlerts(),
     getDismissedAlerts(),
     getOrCreateUnassignedSupplier(),
@@ -63,12 +64,13 @@ export default async function InvoicesPage() {
     <InvoicesIndexClient
       supplierCards={supplierCards}
       suppliers={suppliers}
-      unclassifiedCount={unclassified.length}
+      unclassifiedInvoices={unclassified}
       canWrite={canWrite}
       alerts={alerts}
       dismissedAlerts={dismissedAlerts}
       unassignedSupplierId={unassignedSupplierId}
       unassignedCount={unassignedCount}
+      pendingReviewInvoices={pendingReviewInvoices}
     />
   );
 }

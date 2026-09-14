@@ -53,9 +53,11 @@ const NAV: NavEntry[] = [
 
 interface SidebarProps {
   role: string;
+  /** Número de facturas pendientes de asignar (supplier inactivo) */
+  pendingInvoices?: number;
 }
 
-export function Sidebar({ role }: SidebarProps) {
+export function Sidebar({ role, pendingInvoices = 0 }: SidebarProps) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -96,17 +98,25 @@ export function Sidebar({ role }: SidebarProps) {
           ? pathname === entry.href
           : pathname === entry.href || pathname.startsWith(entry.href + "/");
 
+        // Badge de facturas pendientes solo en el enlace /invoices
+        const showBadge = entry.href === "/invoices" && pendingInvoices > 0;
+
         return (
           <Link
             key={entry.href}
             href={entry.href}
-            className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+            className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
               isActive
                 ? "bg-primary/10 text-primary font-medium"
                 : "text-foreground hover:bg-muted"
             }`}
           >
-            {entry.label}
+            <span>{entry.label}</span>
+            {showBadge && (
+              <span className="ml-auto inline-flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold min-w-[18px] h-[18px] px-1 leading-none">
+                {pendingInvoices > 99 ? "99+" : pendingInvoices}
+              </span>
+            )}
           </Link>
         );
       })}

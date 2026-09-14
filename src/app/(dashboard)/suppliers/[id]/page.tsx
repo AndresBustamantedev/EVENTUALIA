@@ -19,6 +19,7 @@ import { SupplierProductForm } from "@/modules/suppliers/components/SupplierProd
 import { MarkPaidButton } from "@/modules/suppliers/components/MarkPaidButton";
 import { OrderStatusButton } from "@/modules/suppliers/components/OrderStatusButton";
 import { SupplierDeleteButton } from "@/modules/suppliers/components/SupplierDeleteButton";
+import { SupplierToggleActiveButton } from "@/modules/suppliers/components/SupplierToggleActiveButton";
 import type { OrderStatus } from "@/modules/suppliers/types";
 import { TarifasTab } from "@/modules/suppliers/components/TarifasTab";
 
@@ -200,6 +201,14 @@ export default async function SupplierDetailPage({ params, searchParams }: PageP
               invoiceCount={supplierCounts.invoiceCount}
               bundleCount={supplierCounts.bundleCount}
               orderCount={supplierCounts.orderCount}
+            />
+          )}
+
+          {canWrite && supplier.name !== "Sin asignar" && (
+            <SupplierToggleActiveButton
+              supplierId={id}
+              supplierName={supplier.name}
+              initialIsActive={supplier.isActive}
             />
           )}
         </div>
