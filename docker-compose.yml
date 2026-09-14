@@ -46,6 +46,7 @@ volumes:
   # Volúmenes con nombre para desarrollo (datos en Docker)
   pgdata:
   documents:
+    external: true
 
 # ============================================================
 # PRODUCCIÓN (D:\CruzBlancaDatos\)
