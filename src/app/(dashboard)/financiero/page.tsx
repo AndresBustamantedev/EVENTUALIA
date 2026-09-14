@@ -3,7 +3,9 @@ import Link from "next/link";
 import { requirePermission } from "@/core/auth/session";
 import { listInvoices } from "@/modules/suppliers/actions/invoices";
 import { listSuppliers } from "@/modules/suppliers/actions/suppliers";
+import { getAlerts } from "@/modules/suppliers/actions/alerts";
 import type { InvoiceRow } from "@/modules/suppliers/types";
+import type { DuplicatePair } from "@/modules/suppliers/actions/alerts";
 import { FinancieroSearchClient } from "./FinancieroSearchClient";
 
 function yearOf(dateStr: string): number {
@@ -38,10 +40,16 @@ export default async function FinancieroPage({ searchParams }: PageProps) {
   const quarter     = sp.quarter ?? "";
   const paid        = sp.paid    ?? "";
 
-  const [allInvoices, suppliers] = await Promise.all([
+  const [allInvoices, suppliers, allAlerts] = await Promise.all([
     listInvoices(),
     listSuppliers(),
+    alertFilter === "duplicates" ? getAlerts() : Promise.resolve([]),
   ]);
+
+  const duplicatePairs: DuplicatePair[] =
+    alertFilter === "duplicates"
+      ? (allAlerts.find(a => a.id === "duplicates")?.pairs ?? [])
+      : [];
 
   // ── Filtros de alerta (aplicados antes que los demás) ────────
   let invoices: InvoiceRow[] = allInvoices;
@@ -161,7 +169,7 @@ export default async function FinancieroPage({ searchParams }: PageProps) {
         </Link>
       </form>
 
-      <FinancieroSearchClient invoices={invoices} />
+      <FinancieroSearchClient invoices={invoices} duplicatePairs={duplicatePairs} />
     </div>
   );
 }
