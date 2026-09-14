@@ -9,7 +9,7 @@ import { useState, useMemo, useTransition } from "react";
 import Link from "next/link";
 import type { InvoiceRow } from "@/modules/suppliers/types";
 import type { DuplicatePair } from "@/modules/suppliers/actions/alerts";
-import { dismissAlertAction } from "@/modules/suppliers/actions/alerts";
+import { dismissPairAction, dismissZeroInvoiceAction } from "@/modules/suppliers/actions/alerts";
 import { InvoiceDetailPanel } from "@/modules/suppliers/components/InvoiceDetailPanel";
 
 function formatEuros(cents: number) {
@@ -30,52 +30,75 @@ function fmtDate(iso: string) {
 interface Props {
   invoices: InvoiceRow[];
   duplicatePairs?: DuplicatePair[];
+  alertFilter?: string;
+  dismissedZeroIds?: string[];
 }
 
-export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props) {
+export function FinancieroSearchClient({
+  invoices,
+  duplicatePairs = [],
+  alertFilter = "",
+  dismissedZeroIds = [],
+}: Props) {
   const [query, setQuery] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRow | null>(null);
-  const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(new Set());
-  const [, startDismiss] = useTransition();
 
-  const activePairs = duplicatePairs.filter(p => !dismissedPairs.has(p.pairKey));
+  // Estado para duplicados descartados (pairKey)
+  const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(new Set());
+  const [, startDismissPair] = useTransition();
 
-  function handleDismissPair(pairKey: string) {
-    setDismissedPairs(prev => new Set([...prev, pairKey]));
-    startDismiss(async () => { await dismissAlertAction(pairKey); });
+  // Estado para facturas 0€ descartadas
+  const [dismissedZeroSet, setDismissedZeroSet] = useState<Set<string>>(
+    new Set(dismissedZeroIds)
+  );
+  const [, startDismissZero] = useTransition();
+
+  const activePairs = duplicatePairs.filter(p => !dismissedPairKeys.has(p.pairKey));
+
+  function handleDismissPair(pair: DuplicatePair) {
+    setDismissedPairKeys(prev => new Set([...prev, pair.pairKey]));
+    startDismissPair(async () => {
+      await dismissPairAction(pair.invoiceId1, pair.invoiceId2);
+    });
+  }
+
+  function handleDismissZero(invoiceId: string) {
+    setDismissedZeroSet(prev => new Set([...prev, invoiceId]));
+    startDismissZero(async () => {
+      await dismissZeroInvoiceAction(invoiceId);
+    });
   }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return invoices;
 
-    // Intenta parsear como importe (ej: "22.24", "22,24", "-59")
     const asNumber = parseFloat(q.replace(",", "."));
     const isAmount = !isNaN(asNumber);
 
     return invoices.filter((inv) => {
-      // Proveedor
       if (inv.supplierName.toLowerCase().includes(q)) return true;
-      // Nº factura
       if (inv.invoiceNumber?.toLowerCase().includes(q)) return true;
-      // Fecha (busca parcial: "2026-08", "08-31", "2026"...)
       if (inv.invoiceDate.includes(q)) return true;
-      // Importe exacto o parcial (en euros, ej: "22.24" o "22,24")
       if (isAmount) {
         const invEuros = Math.abs(inv.totalInCents / 100);
         if (Math.abs(invEuros - Math.abs(asNumber)) < 0.005) return true;
       }
-      // Importe como texto (ej: "130,89")
       const eurosStr = (inv.totalInCents / 100).toFixed(2).replace(".", ",");
       if (eurosStr.includes(q)) return true;
-
       return false;
     });
   }, [invoices, query]);
 
-  const totalCents     = filtered.reduce((s, i) => s + i.totalInCents, 0);
-  const pendienteCents = filtered.filter((i) => !i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
-  const pagadoCents    = filtered.filter((i) => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+  // Para zero_amount: ocultar en tabla las que ya se descartaron en esta sesión
+  const visibleInvoices = useMemo(() => {
+    if (alertFilter !== "zero_amount") return filtered;
+    return filtered.filter(i => !dismissedZeroSet.has(i.id));
+  }, [filtered, alertFilter, dismissedZeroSet]);
+
+  const totalCents     = visibleInvoices.reduce((s, i) => s + i.totalInCents, 0);
+  const pendienteCents = visibleInvoices.filter((i) => !i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+  const pagadoCents    = visibleInvoices.filter((i) => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
 
   return (
     <>
@@ -98,7 +121,7 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleDismissPair(pair.pairKey)}
+                    onClick={() => handleDismissPair(pair)}
                     className="shrink-0 rounded-md border border-green-300 dark:border-green-700 px-3 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors whitespace-nowrap"
                   >
                     ✓ No son duplicados
@@ -136,9 +159,9 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
         {/* Resumen */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           {[
-            { label: "Total filtrado",  value: formatEuros(totalCents),     sub: `${filtered.length} factura${filtered.length !== 1 ? "s" : ""}` },
-            { label: "Pendiente pago",  value: formatEuros(pendienteCents), sub: `${filtered.filter(i=>!i.isPaid).length} factura${filtered.filter(i=>!i.isPaid).length !== 1 ? "s" : ""}` },
-            { label: "Pagado",          value: formatEuros(pagadoCents),    sub: `${filtered.filter(i=>i.isPaid).length} factura${filtered.filter(i=>i.isPaid).length !== 1 ? "s" : ""}` },
+            { label: "Total filtrado",  value: formatEuros(totalCents),     sub: `${visibleInvoices.length} factura${visibleInvoices.length !== 1 ? "s" : ""}` },
+            { label: "Pendiente pago",  value: formatEuros(pendienteCents), sub: `${visibleInvoices.filter(i=>!i.isPaid).length} factura${visibleInvoices.filter(i=>!i.isPaid).length !== 1 ? "s" : ""}` },
+            { label: "Pagado",          value: formatEuros(pagadoCents),    sub: `${visibleInvoices.filter(i=>i.isPaid).length} factura${visibleInvoices.filter(i=>i.isPaid).length !== 1 ? "s" : ""}` },
           ].map((card) => (
             <div key={card.label} className="rounded-lg border p-4">
               <p className="text-xs text-muted-foreground mb-1">{card.label}</p>
@@ -149,7 +172,7 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
         </div>
 
         {/* Tabla */}
-        {filtered.length === 0 ? (
+        {visibleInvoices.length === 0 ? (
           <div className="rounded-lg border border-dashed py-12 text-center">
             <p className="text-muted-foreground text-sm">
               {query ? `Sin resultados para "${query}".` : "No hay facturas con los filtros actuales."}
@@ -168,10 +191,13 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
                     <th className="px-4 py-2.5 font-medium text-right">Total</th>
                     <th className="px-4 py-2.5 font-medium text-center">Pago</th>
                     <th className="px-4 py-2.5 font-medium text-right">PDF</th>
+                    {alertFilter === "zero_amount" && (
+                      <th className="px-4 py-2.5 font-medium text-right">Acción</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {filtered.map((inv) => (
+                  {visibleInvoices.map((inv) => (
                     <tr
                       key={inv.id}
                       className={`hover:bg-muted/20 transition-colors ${
@@ -241,6 +267,17 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
+                      {alertFilter === "zero_amount" && (
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDismissZero(inv.id)}
+                            className="text-xs rounded-md border border-green-300 dark:border-green-700 px-2 py-1 font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors whitespace-nowrap"
+                          >
+                            ✓ Correcto
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -250,7 +287,7 @@ export function FinancieroSearchClient({ invoices, duplicatePairs = [] }: Props)
         )}
       </div>
 
-      {/* Panel de detalle lateral — se abre al hacer clic en Nº factura */}
+      {/* Panel de detalle lateral */}
       {selectedInvoice && (
         <InvoiceDetailPanel
           invoice={selectedInvoice}
