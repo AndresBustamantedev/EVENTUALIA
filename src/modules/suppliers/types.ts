@@ -89,6 +89,7 @@ export interface InvoiceRow {
   isPaid: boolean;
   paidAt: string | null;
   pendingReview: boolean;
+  isAlbaran: boolean;
   notes: string | null;
   fileId: string | null;       // storedFileId para descarga individual
   bundleId: string | null;     // bundle del que proviene (si aplica)

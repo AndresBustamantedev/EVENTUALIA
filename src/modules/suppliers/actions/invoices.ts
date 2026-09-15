@@ -3,7 +3,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/core/db/client";
-import { requirePermission } from "@/core/auth/session";
+import { requirePermission, requireAnyPermission } from "@/core/auth/session";
 import { storeFile } from "@/core/storage/StorageProvider";
 import {
   validateDocumentBuffer,
@@ -48,6 +48,7 @@ function mapInvoice(inv: any): InvoiceRow {
     gestoriaPackageQuarter: gestoriaPkg?.quarter ?? null,
     gestoriaStatus:         (gestoriaPkg?.status as "SENT" | "CONFIRMED" | null) ?? null,
     pendingReview:          inv.pendingReview ?? false,
+    isAlbaran:              inv.isAlbaran ?? false,
   };
 }
 
@@ -114,6 +115,7 @@ export async function createInvoiceAction(
     isPaid: (formData.get("isPaid") as string) || "false",
   };
   const ocrExtracted = formData.get("ocrExtracted") === "true";
+  const isAlbaran = formData.get("isAlbaran") === "true";
   const bundleId = (formData.get("bundleId") as string) || null;
   const vatLines = parseVatLinesFromForm(formData);
 
@@ -173,6 +175,7 @@ export async function createInvoiceAction(
       notes: d.notes || null,
       isPaid: d.isPaid ?? false,
       ocrExtracted,
+      isAlbaran,
       bundleId,
       storedFileId,
       createdById: actor.id,
@@ -245,6 +248,7 @@ export async function uploadInvoiceAction(
   const totalEuros   = (formData.get("totalEuros")  as string) || "";
   const totalInCents = totalEuros ? Math.round(parseFloat(totalEuros.replace(",", ".")) * 100) : 0;
   const forceCreate  = formData.get("forceCreate") === "true";
+  const isAlbaran    = formData.get("isAlbaran") === "true";
 
   if (!supplierId || !invoiceDate) {
     return { error: "Proveedor y fecha son obligatorios." };
@@ -290,6 +294,7 @@ export async function uploadInvoiceAction(
       totalInCents: totalInCents || 0,
       isPaid:       false,
       ocrExtracted: false,
+      isAlbaran,
       storedFileId,
       createdById:  actor.id,
     },
@@ -343,6 +348,7 @@ export interface UpdateInvoicePayload {
   taxInCents:     number | null;
   notes:          string | null;
   isPaid:         boolean;
+  isAlbaran?:     boolean;
   vatLines?:      VatLineRow[];
 }
 
@@ -381,6 +387,7 @@ export async function updateInvoiceAction(
       vatRate: legacyRate,
       notes:         payload.notes || null,
       isPaid:        payload.isPaid,
+      ...(payload.isAlbaran !== undefined ? { isAlbaran: payload.isAlbaran } : {}),
       ...(paidAt !== undefined ? { paidAt } : {}),
       ...(vatLines.length > 0 ? {
         vatLines: {
@@ -478,4 +485,16 @@ export async function listPendingReviewInvoices(): Promise<InvoiceRow[]> {
     orderBy: { createdAt: "desc" },
   });
   return (rows as any[]).map(mapInvoice);
+}
+
+// ── Obtener factura por ID ──────────────────────────────────────────────────
+
+export async function getInvoiceAction(invoiceId: string): Promise<InvoiceRow | null> {
+  await requireAnyPermission(["suppliers:read", "gestoria:read"]);
+  const inv = await (prisma as any).invoice.findUnique({
+    where:   { id: invoiceId, deletedAt: null },
+    include: INVOICE_INCLUDE,
+  });
+  if (!inv) return null;
+  return mapInvoice(inv);
 }

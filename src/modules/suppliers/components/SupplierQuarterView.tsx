@@ -168,6 +168,7 @@ export function SupplierQuarterView({ supplierId, invoices, bundles, canWrite, I
   const dupKeyCount = new Map<string, number>();
   for (const inv of invoices) {
     if (!inv.invoiceNumber) continue;
+    if (inv.isAlbaran) continue;
     const key = `${inv.invoiceNumber}|${inv.invoiceDate}|${inv.totalInCents}`;
     dupKeyCount.set(key, (dupKeyCount.get(key) ?? 0) + 1);
   }
@@ -248,9 +249,11 @@ export function SupplierQuarterView({ supplierId, invoices, bundles, canWrite, I
       {quarters.map(({ year, q, invoices: qInvoices }) => {
         const key = quarterKey(year, q);
         const isOpen = openKeys.has(key);
-        const total = qInvoices.reduce((s, i) => s + i.totalInCents, 0);
-        const paid = qInvoices.filter(i => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+        const facturas = qInvoices.filter(i => !i.isAlbaran);
+        const total = facturas.reduce((s, i) => s + i.totalInCents, 0);
+        const paid = facturas.filter(i => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
         const pending = total - paid;
+        const albaranCount = qInvoices.filter(i => i.isAlbaran).length;
 
         return (
           <div key={key} className="rounded-lg border overflow-hidden">
@@ -264,7 +267,8 @@ export function SupplierQuarterView({ supplierId, invoices, bundles, canWrite, I
                 <span className="font-semibold text-sm">{Q_LABELS[q]}</span>
                 <span className="text-xs text-muted-foreground">{year}</span>
                 <span className="text-xs text-muted-foreground">
-                  {qInvoices.length} factura{qInvoices.length !== 1 ? "s" : ""}
+                  {facturas.length} factura{facturas.length !== 1 ? "s" : ""}
+                  {albaranCount > 0 && ` + ${albaranCount} albarán${albaranCount !== 1 ? "es" : ""}`}
                 </span>
               </div>
               <div className="flex items-center gap-4 shrink-0">
@@ -308,16 +312,21 @@ export function SupplierQuarterView({ supplierId, invoices, bundles, canWrite, I
                       {qInvoices
                         .sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate))
                         .map(inv => (
-                          <tr key={inv.id} className={`hover:bg-muted/10 ${isDuplicate(inv) ? "bg-red-50/40 dark:bg-red-900/10" : inv.totalInCents < 0 ? "bg-orange-50/40 dark:bg-orange-900/10" : ""}`}>
+                          <tr key={inv.id} className={`hover:bg-muted/10 ${isDuplicate(inv) ? "bg-red-50/40 dark:bg-red-900/10" : inv.isAlbaran ? "bg-sky-50/40 dark:bg-sky-900/10" : inv.totalInCents < 0 ? "bg-orange-50/40 dark:bg-orange-900/10" : ""}`}>
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <p className="font-medium">{inv.invoiceNumber ?? "—"}</p>
+                                {inv.isAlbaran && (
+                                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                                    📋 Albarán
+                                  </span>
+                                )}
                                 {isDuplicate(inv) && (
                                   <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400">
                                     ⚠ Duplicada
                                   </span>
                                 )}
-                                {inv.totalInCents < 0 && (
+                                {inv.totalInCents < 0 && !inv.isAlbaran && (
                                   <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400">
                                     − Rectificativa
                                   </span>
@@ -377,6 +386,9 @@ export function SupplierQuarterView({ supplierId, invoices, bundles, canWrite, I
                       <tr>
                         <td className="px-3 py-2 text-xs font-semibold" colSpan={2}>
                           Total: {euros(total)}
+                          {albaranCount > 0 && (
+                            <span className="ml-2 text-muted-foreground font-normal">(albaranes excluidos)</span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs text-green-700 dark:text-green-400 font-medium">
                           Pagado: {euros(paid)}

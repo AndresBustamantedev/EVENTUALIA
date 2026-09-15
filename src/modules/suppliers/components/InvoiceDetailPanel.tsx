@@ -13,6 +13,7 @@ import type { InvoiceRow, VatLineRow, InvoiceLineRow } from "@/modules/suppliers
 interface Props {
   invoice: InvoiceRow;
   onClose: () => void;
+  readOnly?: boolean;
 }
 
 function euros(cents: number) {
@@ -29,7 +30,7 @@ function eurosToCents(str: string): number {
   return isNaN(n) ? 0 : Math.round(n * 100);
 }
 
-export function InvoiceDetailPanel({ invoice, onClose }: Props) {
+export function InvoiceDetailPanel({ invoice, onClose, readOnly = false }: Props) {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [lines, setLines] = useState<InvoiceLineRow[] | null>(null);
   const [loadingLines, setLoadingLines] = useState(true);
@@ -45,6 +46,7 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
     taxEuros:      centsToEuros(invoice.taxInCents),
     notes:         invoice.notes ?? "",
     isPaid:        invoice.isPaid,
+    isAlbaran:     invoice.isAlbaran ?? false,
   });
   const [vatLines, setVatLines] = useState<VatLineRow[]>(invoice.vatLines ?? []);
 
@@ -105,6 +107,7 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
         taxInCents:    hasVatLines ? derivedTax : (fields.taxEuros ? eurosToCents(fields.taxEuros) : null),
         notes:         fields.notes.trim() || null,
         isPaid:        fields.isPaid,
+        isAlbaran:     fields.isAlbaran,
         vatLines:      hasVatLines ? vatLines : undefined,
       });
       if (result.error) {
@@ -248,12 +251,19 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b shrink-0 bg-card">
           <div className="min-w-0">
             <p className="text-xs text-muted-foreground mb-0.5">{invoice.supplierName}</p>
-            <h2 className="text-lg font-bold leading-tight truncate">
-              {invoice.invoiceNumber
-                ? `Factura ${invoice.invoiceNumber}`
-                : <span className="italic text-muted-foreground">Sin número</span>
-              }
-            </h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-lg font-bold leading-tight truncate">
+                {invoice.invoiceNumber
+                  ? `${invoice.isAlbaran ? "Albarán" : "Factura"} ${invoice.invoiceNumber}`
+                  : <span className="italic text-muted-foreground">Sin número</span>
+                }
+              </h2>
+              {invoice.isAlbaran && (
+                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400">
+                  📋 Albarán
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground mt-0.5">{invoice.invoiceDate}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -271,7 +281,7 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
                 📄 PDF
               </a>
             )}
-            {mode === "view" ? (
+            {!readOnly && (mode === "view" ? (
               <button
                 type="button"
                 onClick={() => setMode("edit")}
@@ -287,7 +297,7 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
               >
                 Cancelar
               </button>
-            )}
+            ))}
             <button
               type="button"
               onClick={onClose}
@@ -366,6 +376,30 @@ export function InvoiceDetailPanel({ invoice, onClose }: Props) {
                   {error}
                 </p>
               )}
+
+              {/* Tipo de documento */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tipo de documento</label>
+                <div className="inline-flex rounded-md border overflow-hidden text-sm">
+                  <button
+                    type="button"
+                    onClick={() => set("isAlbaran", false)}
+                    className={`px-3 py-1.5 transition-colors ${!fields.isAlbaran ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+                  >
+                    🧾 Factura
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set("isAlbaran", true)}
+                    className={`px-3 py-1.5 transition-colors ${fields.isAlbaran ? "bg-sky-500 text-white" : "hover:bg-muted text-muted-foreground"}`}
+                  >
+                    📋 Albarán
+                  </button>
+                </div>
+                {fields.isAlbaran && (
+                  <p className="text-xs text-muted-foreground italic">El albarán no sumará en los totales financieros.</p>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">

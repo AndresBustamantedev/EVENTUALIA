@@ -662,6 +662,7 @@ model Invoice {
   ocrRawText        String?  @map("ocr_raw_text") @db.Text
   // Revisión: facturas recibidas por email esperan confirmación manual
   pendingReview     Boolean  @default(false) @map("pending_review")
+  isAlbaran         Boolean  @default(false) @map("is_albaran")
   deletedAt         DateTime? @map("deleted_at")
 
   createdById  String    @map("created_by_id")
@@ -678,6 +679,7 @@ model Invoice {
   @@index([supplierId, invoiceDate])
   @@index([deletedAt])
   @@index([isPaid])
+  @@index([isAlbaran])
   vatLines      InvoiceVatLine[]
 
   @@map("invoices")
