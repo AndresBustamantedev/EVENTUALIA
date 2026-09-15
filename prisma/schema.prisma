@@ -660,6 +660,8 @@ model Invoice {
   // OCR
   ocrExtracted      Boolean  @default(false) @map("ocr_extracted")
   ocrRawText        String?  @map("ocr_raw_text") @db.Text
+  // Revisión: facturas recibidas por email esperan confirmación manual
+  pendingReview     Boolean  @default(false) @map("pending_review")
   deletedAt         DateTime? @map("deleted_at")
 
   createdById  String    @map("created_by_id")

@@ -6,8 +6,8 @@ export type GestoriaStatus = "DRAFT" | "SENT" | "CONFIRMED";
 
 export const GESTORIA_STATUS_LABELS: Record<GestoriaStatus, string> = {
   DRAFT:     "En preparación",
-  SENT:      "Enviado a la gestora",
-  CONFIRMED: "Confirmado",
+  SENT:      "En gestoría",
+  CONFIRMED: "Recibido",
 };
 
 export const QUARTER_LABELS: Record<number, string> = {

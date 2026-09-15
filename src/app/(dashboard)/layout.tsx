@@ -1,6 +1,23 @@
 import { requireSession } from "@/core/auth/session";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { UserMenu } from "@/components/layout/UserMenu";
+import { prisma } from "@/core/db/client";
+
+/** Facturas "pendientes de asignar": aquellas cuyo proveedor está inactivo
+ *  (tanto "Sin asignar" como proveedores auto-creados desde email inbound). */
+async function getPendingInvoicesCount(): Promise<number> {
+  try {
+    const count = await (prisma as any).invoice.count({
+      where: {
+        supplier: { isActive: false },
+        deletedAt: null,
+      },
+    });
+    return count as number;
+  } catch {
+    return 0;
+  }
+}
 
 export default async function DashboardLayout({
   children,
@@ -8,10 +25,11 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const user = await requireSession();
+  const pendingInvoices = await getPendingInvoicesCount();
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar role={user.role} />
+      <Sidebar role={user.role} pendingInvoices={pendingInvoices} />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Cabecera */}

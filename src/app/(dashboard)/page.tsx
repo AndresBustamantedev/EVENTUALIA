@@ -38,11 +38,10 @@ export default async function DashboardPage() {
       available: hasPermission(user.role, "menu:read"),
     },
     {
-      href: "/suppliers",
+      href: "/invoices",
       title: "Proveedores y facturas",
       description: "Gestión de proveedores y registro de facturas.",
-      badge: "Próximamente",
-      available: false,
+      available: hasPermission(user.role, "suppliers:read"),
     },
   ].filter((m) => m.available || m.badge);
 

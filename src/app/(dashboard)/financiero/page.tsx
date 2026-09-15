@@ -3,7 +3,9 @@ import Link from "next/link";
 import { requirePermission } from "@/core/auth/session";
 import { listInvoices } from "@/modules/suppliers/actions/invoices";
 import { listSuppliers } from "@/modules/suppliers/actions/suppliers";
+import { getDuplicatePairs, getDismissedZeroIds } from "@/modules/suppliers/actions/alerts";
 import type { InvoiceRow } from "@/modules/suppliers/types";
+import type { DuplicatePair } from "@/modules/suppliers/actions/alerts";
 import { FinancieroSearchClient } from "./FinancieroSearchClient";
 
 function yearOf(dateStr: string): number {
@@ -43,14 +45,26 @@ export default async function FinancieroPage({ searchParams }: PageProps) {
     listSuppliers(),
   ]);
 
-  // ── Filtros de alerta (aplicados antes que los demás) ────────
+  // Datos extra según filtro de alerta
+  let duplicatePairs: DuplicatePair[] = [];
+  let dismissedZeroIds: string[] = [];
+
+  if (alertFilter === "duplicates") {
+    duplicatePairs = await getDuplicatePairs();
+  }
+  if (alertFilter === "zero_amount") {
+    dismissedZeroIds = await getDismissedZeroIds();
+  }
+
+  // ── Filtros de alerta ────────────────────────────────────────
   let invoices: InvoiceRow[] = allInvoices;
 
   if (alertFilter === "overdue") {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     invoices = invoices.filter(i => !i.isPaid && new Date(i.invoiceDate) < cutoff);
   } else if (alertFilter === "zero_amount") {
-    invoices = invoices.filter(i => i.totalInCents === 0);
+    const dismissedSet = new Set(dismissedZeroIds);
+    invoices = invoices.filter(i => i.totalInCents === 0 && !dismissedSet.has(i.id));
   } else if (alertFilter === "incoherent_vat") {
     invoices = invoices.filter(i => {
       const base = i.baseAmountInCents;
@@ -59,25 +73,13 @@ export default async function FinancieroPage({ searchParams }: PageProps) {
       return Math.abs((base + tax) - i.totalInCents) > 100;
     });
   } else if (alertFilter === "duplicates") {
-    const sorted = [...allInvoices]
-      .filter(i => i.totalInCents > 0)
-      .sort((a, b) =>
-        a.supplierId.localeCompare(b.supplierId) ||
-        a.totalInCents - b.totalInCents ||
-        a.invoiceDate.localeCompare(b.invoiceDate)
-      );
-    const dupIds = new Set<string>();
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const a = sorted[i], b = sorted[i + 1];
-      if (a.supplierId === b.supplierId && a.totalInCents === b.totalInCents) {
-        const diff = Math.abs(new Date(a.invoiceDate).getTime() - new Date(b.invoiceDate).getTime());
-        if (diff <= 7 * 24 * 60 * 60 * 1000) { dupIds.add(a.id); dupIds.add(b.id); }
-      }
-    }
-    invoices = allInvoices.filter(i => dupIds.has(i.id));
+    const dupInvoiceIds = new Set(
+      duplicatePairs.flatMap(p => [p.invoiceId1, p.invoiceId2])
+    );
+    invoices = allInvoices.filter(i => dupInvoiceIds.has(i.id));
   }
 
-  // ── Filtros normales (sobre lo anterior) ─────────────────────
+  // ── Filtros normales ──────────────────────────────────────────
   if (supplierId) invoices = invoices.filter(i => i.supplierId === supplierId);
   if (year)       invoices = invoices.filter(i => String(yearOf(i.invoiceDate)) === year);
   if (quarter)    invoices = invoices.filter(i => String(quarterOf(i.invoiceDate)) === quarter);
@@ -161,7 +163,12 @@ export default async function FinancieroPage({ searchParams }: PageProps) {
         </Link>
       </form>
 
-      <FinancieroSearchClient invoices={invoices} />
+      <FinancieroSearchClient
+        invoices={invoices}
+        duplicatePairs={duplicatePairs}
+        alertFilter={alertFilter}
+        dismissedZeroIds={dismissedZeroIds}
+      />
     </div>
   );
 }

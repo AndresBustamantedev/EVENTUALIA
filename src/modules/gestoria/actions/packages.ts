@@ -3,7 +3,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/core/db/client";
-import { requirePermission } from "@/core/auth/session";
+import { requirePermission, requireAnyPermission } from "@/core/auth/session";
 import type {
   GestoriaPackageRow,
   GestoriaItemRow,
@@ -55,7 +55,7 @@ function mapItem(i: any): GestoriaItemRow {
 // ── Queries ───────────────────────────────────────────────────
 
 export async function listPackages(): Promise<GestoriaPackageRow[]> {
-  await requirePermission("suppliers:read");
+  await requirePermission("gestoria:read");
   const rows = await (prisma as any).gestoriaPackage.findMany({
     include: {
       _count: { select: { items: true } },
@@ -69,7 +69,7 @@ export async function listPackages(): Promise<GestoriaPackageRow[]> {
 export async function getPackage(
   packageId: string
 ): Promise<{ pkg: GestoriaPackageRow; items: GestoriaItemRow[] } | null> {
-  await requirePermission("suppliers:read");
+  await requirePermission("gestoria:read");
   const p = await (prisma as any).gestoriaPackage.findUnique({
     where: { id: packageId },
     include: {
@@ -103,7 +103,7 @@ export async function getCandidateInvoices(
   quarter: number,
   _packageId?: string
 ): Promise<CandidateInvoice[]> {
-  await requirePermission("suppliers:read");
+  await requirePermission("gestoria:read");
 
   // Rango de fechas del trimestre
   const startMonth = (quarter - 1) * 3 + 1;
@@ -140,7 +140,7 @@ export async function createPackageAction(
   formData: FormData
 ): Promise<GestoriaPackageFormState> {
   let actor: any;
-  try { actor = await requirePermission("suppliers:write"); }
+  try { actor = await requirePermission("gestoria:write"); }
   catch { return { error: "Sin permiso." }; }
 
   const year    = parseInt(formData.get("year") as string, 10);
@@ -166,7 +166,7 @@ export async function addInvoicesToPackageAction(
   packageId: string,
   invoiceIds: string[]
 ): Promise<GestoriaActionState> {
-  try { await requirePermission("suppliers:write"); }
+  try { await requirePermission("gestoria:write"); }
   catch { return { error: "Sin permiso." }; }
 
   if (!invoiceIds.length) return { error: "No se seleccionó ninguna factura." };
@@ -191,7 +191,7 @@ export async function removeInvoiceFromPackageAction(
   itemId: string,
   packageId: string
 ): Promise<GestoriaActionState> {
-  try { await requirePermission("suppliers:write"); }
+  try { await requirePermission("gestoria:write"); }
   catch { return { error: "Sin permiso." }; }
 
   const pkg = await (prisma as any).gestoriaPackage.findUnique({
@@ -208,7 +208,7 @@ export async function removeInvoiceFromPackageAction(
 export async function markPackageSentAction(
   packageId: string
 ): Promise<GestoriaActionState> {
-  try { await requirePermission("suppliers:write"); }
+  try { await requirePermission("gestoria:write"); }
   catch { return { error: "Sin permiso." }; }
 
   const pkg = await (prisma as any).gestoriaPackage.findUnique({
@@ -232,7 +232,7 @@ export async function markPackageSentAction(
 export async function markPackageConfirmedAction(
   packageId: string
 ): Promise<GestoriaActionState> {
-  try { await requirePermission("suppliers:write"); }
+  try { await requireAnyPermission(["gestoria:confirm", "gestoria:write"]); }
   catch { return { error: "Sin permiso." }; }
 
   await (prisma as any).gestoriaPackage.update({
@@ -245,10 +245,37 @@ export async function markPackageConfirmedAction(
   return { success: true };
 }
 
+export async function setPackageStatusAction(
+  packageId: string,
+  status: "DRAFT" | "SENT" | "CONFIRMED"
+): Promise<GestoriaActionState> {
+  try { await requirePermission("gestoria:write"); }
+  catch { return { error: "Sin permiso." }; }
+
+  const pkg = await (prisma as any).gestoriaPackage.findUnique({
+    where: { id: packageId }, select: { status: true },
+  });
+  if (!pkg) return { error: "Paquete no encontrado." };
+
+  const updateData: Record<string, unknown> = { status };
+  if (status === "SENT" && pkg.status !== "SENT") updateData.sentAt = new Date();
+  if (status === "CONFIRMED" && pkg.status !== "CONFIRMED") updateData.confirmedAt = new Date();
+  if (status === "DRAFT") { updateData.sentAt = null; updateData.confirmedAt = null; }
+
+  await (prisma as any).gestoriaPackage.update({
+    where: { id: packageId },
+    data:  updateData,
+  });
+
+  revalidatePath(`/gestoria/${packageId}`);
+  revalidatePath("/gestoria");
+  return { success: true };
+}
+
 export async function deletePackageAction(
   packageId: string
 ): Promise<GestoriaActionState> {
-  try { await requirePermission("suppliers:write"); }
+  try { await requirePermission("gestoria:write"); }
   catch { return { error: "Sin permiso." }; }
 
   const pkg = await (prisma as any).gestoriaPackage.findUnique({

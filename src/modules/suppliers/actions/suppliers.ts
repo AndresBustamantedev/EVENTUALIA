@@ -361,3 +361,100 @@ export async function quickCreateSupplierAction(
   revalidatePath("/financiero/importar");
   return { id: supplier.id };
 }
+
+// ── Toggle activo/inactivo ──────────────────────────────────────────────────
+
+export async function toggleSupplierActiveAction(
+  supplierId: string
+): Promise<{ isActive: boolean; error?: string }> {
+  try { await requirePermission("suppliers:write"); }
+  catch { return { isActive: false, error: "Sin permiso." }; }
+
+  const supplier = await (prisma as any).supplier.findUnique({
+    where:  { id: supplierId },
+    select: { id: true, isActive: true, name: true },
+  });
+  if (!supplier) return { isActive: false, error: "Proveedor no encontrado." };
+  if (supplier.name === "Sin asignar") {
+    return { isActive: false, error: "No se puede cambiar el estado de este proveedor." };
+  }
+
+  const updated = await (prisma as any).supplier.update({
+    where:  { id: supplierId },
+    data:   { isActive: !supplier.isActive },
+    select: { isActive: true },
+  });
+
+  revalidatePath(`/invoices/${supplierId}`);
+  revalidatePath("/invoices");
+  revalidatePath("/suppliers");
+  revalidatePath("/financiero");
+
+  return { isActive: updated.isActive };
+}
+
+// ── Sincronización automática de estado (cron diario) ──────────────────────
+
+/**
+ * • Desactiva proveedores activos sin facturas en los últimos 6 meses.
+ * • Activa proveedores inactivos con alguna factura en los últimos 3 meses.
+ * Nunca toca "Sin asignar".
+ */
+export async function autoSyncSupplierStatusAction(): Promise<{
+  deactivated: number;
+  activated:   number;
+}> {
+  const sixMonthsAgo   = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+  const threeMonthsAgo = new Date(Date.now() -  90 * 24 * 60 * 60 * 1000);
+  const SYSTEM_NAME    = "Sin asignar";
+
+  // Activos sin factura reciente → desactivar
+  const active = await (prisma as any).supplier.findMany({
+    where:  { isActive: true, NOT: { name: SYSTEM_NAME } },
+    select: {
+      id: true,
+      _count: { select: { invoices: { where: { invoiceDate: { gte: sixMonthsAgo }, deletedAt: null } } } },
+    },
+  });
+  const toDeactivate = (active as any[])
+    .filter(s => s._count.invoices === 0)
+    .map(s => s.id as string);
+
+  let deactivated = 0;
+  if (toDeactivate.length > 0) {
+    const r = await (prisma as any).supplier.updateMany({
+      where: { id: { in: toDeactivate } },
+      data:  { isActive: false },
+    });
+    deactivated = r.count;
+  }
+
+  // Inactivos con factura reciente → activar
+  const inactive = await (prisma as any).supplier.findMany({
+    where:  { isActive: false, NOT: { name: SYSTEM_NAME } },
+    select: {
+      id: true,
+      _count: { select: { invoices: { where: { invoiceDate: { gte: threeMonthsAgo }, deletedAt: null } } } },
+    },
+  });
+  const toActivate = (inactive as any[])
+    .filter(s => s._count.invoices > 0)
+    .map(s => s.id as string);
+
+  let activated = 0;
+  if (toActivate.length > 0) {
+    const r = await (prisma as any).supplier.updateMany({
+      where: { id: { in: toActivate } },
+      data:  { isActive: true },
+    });
+    activated = r.count;
+  }
+
+  if (deactivated > 0 || activated > 0) {
+    revalidatePath("/suppliers");
+    revalidatePath("/invoices");
+    revalidatePath("/financiero");
+  }
+
+  return { deactivated, activated };
+}
