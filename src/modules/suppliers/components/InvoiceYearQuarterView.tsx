@@ -58,6 +58,7 @@ export function InvoiceYearQuarterView({ invoices, canWrite }: Props) {
   const dupKeyCount = new Map<string, number>();
   for (const inv of invoices) {
     if (!inv.invoiceNumber) continue;
+    if (inv.isAlbaran) continue;
     const key = `${inv.invoiceNumber}|${inv.invoiceDate}|${inv.totalInCents}`;
     dupKeyCount.set(key, (dupKeyCount.get(key) ?? 0) + 1);
   }
@@ -170,6 +171,7 @@ export function InvoiceYearQuarterView({ invoices, canWrite }: Props) {
                   key={inv.id}
                   className={`hover:bg-muted/20 transition-colors ${
                     isDuplicate(inv) ? "bg-red-50/40 dark:bg-red-900/10"
+                    : inv.isAlbaran ? "bg-sky-50/40 dark:bg-sky-900/10"
                     : inv.totalInCents < 0 ? "bg-orange-50/40 dark:bg-orange-900/10"
                     : ""
                   }`}
@@ -186,6 +188,11 @@ export function InvoiceYearQuarterView({ invoices, canWrite }: Props) {
                       >
                         {inv.invoiceNumber ?? <span className="italic text-muted-foreground text-xs">Sin número</span>}
                       </button>
+                      {inv.isAlbaran && (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                          📋 Albarán
+                        </span>
+                      )}
                       {isDuplicate(inv) && (
                         <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400">
                           ⚠ Duplicada

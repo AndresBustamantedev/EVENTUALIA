@@ -171,7 +171,7 @@ async function _computeAllAlerts(): Promise<{ alerts: AppAlert[]; dismissedIds: 
       .map(id => id.slice(6))
   );
   const allInvs = await (prisma as any).invoice.findMany({
-    where: { deletedAt: null, totalInCents: { gt: 0 } },
+    where: { deletedAt: null, totalInCents: { gt: 0 }, isAlbaran: false },
     select: { id: true, supplierId: true, totalInCents: true, invoiceDate: true },
     orderBy: [{ supplierId: "asc" }, { totalInCents: "asc" }, { invoiceDate: "asc" }],
   });
@@ -266,7 +266,7 @@ export async function getDuplicatePairs(): Promise<DuplicatePair[]> {
   );
 
   const allInvs = await (prisma as any).invoice.findMany({
-    where: { deletedAt: null, totalInCents: { gt: 0 } },
+    where: { deletedAt: null, totalInCents: { gt: 0 }, isAlbaran: false },
     select: { id: true, supplierId: true, totalInCents: true, invoiceDate: true },
     orderBy: [{ supplierId: "asc" }, { totalInCents: "asc" }, { invoiceDate: "asc" }],
   });

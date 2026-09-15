@@ -71,6 +71,7 @@ export function InvoiceForm({ supplierId, action, onSuccess, bundles = [] }: Pro
   const [state, formAction, isPending] = useActionState(action, {});
   const [key, setKey] = useState(0);
 
+  const [isAlbaran, setIsAlbaran] = useState(false);
   const [ocrFile, setOcrFile] = useState<File | null>(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
@@ -94,6 +95,7 @@ export function InvoiceForm({ supplierId, action, onSuccess, bundles = [] }: Pro
       setOcrError(null);
       setVatLines([]);
       setTotalDisplay("");
+      setIsAlbaran(false);
       onSuccess?.();
     }
   }, [state.success, onSuccess]);
@@ -225,6 +227,42 @@ export function InvoiceForm({ supplierId, action, onSuccess, bundles = [] }: Pro
 
       {/* ── Campos principales ───────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Tipo de documento */}
+        <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+          <p className="text-sm font-medium text-foreground shrink-0">Tipo de documento</p>
+          <div className="inline-flex rounded-md border overflow-hidden text-sm">
+            <button
+              type="button"
+              onClick={() => setIsAlbaran(false)}
+              disabled={isPending}
+              className={`px-4 py-1.5 transition-colors disabled:opacity-60 ${
+                !isAlbaran
+                  ? "bg-primary text-primary-foreground font-medium"
+                  : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              🧾 Factura
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAlbaran(true)}
+              disabled={isPending}
+              className={`px-4 py-1.5 border-l transition-colors disabled:opacity-60 ${
+                isAlbaran
+                  ? "bg-primary text-primary-foreground font-medium"
+                  : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              📋 Albarán
+            </button>
+          </div>
+          {isAlbaran && (
+            <p className="text-xs text-muted-foreground italic">
+              El albarán se guardará pero no sumará en los totales financieros.
+            </p>
+          )}
+        </div>
+        <input type="hidden" name="isAlbaran" value={String(isAlbaran)} />
         {/* Nº factura */}
         <div>
           <label htmlFor="invoiceNumber" className={LABEL_CLASS}>Nº factura</label>

@@ -39,6 +39,7 @@ export function InvoiceEditModal({ invoice, onClose, onSuccess }: Props) {
     totalEuros:    centsToEuros(invoice.totalInCents),
     notes:         invoice.notes ?? "",
     isPaid:        invoice.isPaid,
+    isAlbaran:     invoice.isAlbaran ?? false,
   });
 
   // Desglose IVA — inicializar desde vatLines existentes o vacío
@@ -90,6 +91,7 @@ export function InvoiceEditModal({ invoice, onClose, onSuccess }: Props) {
         taxInCents:   vatLines.length > 0 ? derivedTax : null,
         notes:        fields.notes.trim() || null,
         isPaid:       fields.isPaid,
+        isAlbaran:    fields.isAlbaran,
         vatLines:     vatLines.length > 0 ? vatLines : undefined,
       });
       if (result.error) {
@@ -192,6 +194,42 @@ export function InvoiceEditModal({ invoice, onClose, onSuccess }: Props) {
                   className="text-muted-foreground hover:text-destructive text-xl leading-none pb-1">×</button>
               </div>
             ))}
+          </div>
+
+          {/* Tipo de documento */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tipo de documento</label>
+            <div className="inline-flex rounded-md border overflow-hidden text-sm">
+              <button
+                type="button"
+                onClick={() => set("isAlbaran", false)}
+                disabled={isPending}
+                className={`px-4 py-1.5 transition-colors disabled:opacity-60 ${
+                  !fields.isAlbaran
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                🧾 Factura
+              </button>
+              <button
+                type="button"
+                onClick={() => set("isAlbaran", true)}
+                disabled={isPending}
+                className={`px-4 py-1.5 border-l transition-colors disabled:opacity-60 ${
+                  fields.isAlbaran
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                📋 Albarán
+              </button>
+            </div>
+            {fields.isAlbaran && (
+              <p className="text-xs text-muted-foreground italic">
+                El albarán no sumará en los totales financieros.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

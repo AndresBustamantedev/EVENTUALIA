@@ -96,9 +96,12 @@ export function FinancieroSearchClient({
     return filtered.filter(i => !dismissedZeroSet.has(i.id));
   }, [filtered, alertFilter, dismissedZeroSet]);
 
-  const totalCents     = visibleInvoices.reduce((s, i) => s + i.totalInCents, 0);
-  const pendienteCents = visibleInvoices.filter((i) => !i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
-  const pagadoCents    = visibleInvoices.filter((i) => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+  // Albaranes son visibles pero no suman en los totales financieros
+  const facturas        = visibleInvoices.filter(i => !i.isAlbaran);
+  const totalCents      = facturas.reduce((s, i) => s + i.totalInCents, 0);
+  const pendienteCents  = facturas.filter((i) => !i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+  const pagadoCents     = facturas.filter((i) => i.isPaid).reduce((s, i) => s + i.totalInCents, 0);
+  const albaranCount    = visibleInvoices.filter(i => i.isAlbaran).length;
 
   return (
     <>
@@ -159,9 +162,9 @@ export function FinancieroSearchClient({
         {/* Resumen */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           {[
-            { label: "Total filtrado",  value: formatEuros(totalCents),     sub: `${visibleInvoices.length} factura${visibleInvoices.length !== 1 ? "s" : ""}` },
-            { label: "Pendiente pago",  value: formatEuros(pendienteCents), sub: `${visibleInvoices.filter(i=>!i.isPaid).length} factura${visibleInvoices.filter(i=>!i.isPaid).length !== 1 ? "s" : ""}` },
-            { label: "Pagado",          value: formatEuros(pagadoCents),    sub: `${visibleInvoices.filter(i=>i.isPaid).length} factura${visibleInvoices.filter(i=>i.isPaid).length !== 1 ? "s" : ""}` },
+            { label: "Total filtrado",  value: formatEuros(totalCents),     sub: `${facturas.length} factura${facturas.length !== 1 ? "s" : ""}${albaranCount > 0 ? ` + ${albaranCount} albarán${albaranCount !== 1 ? "es" : ""}` : ""}` },
+            { label: "Pendiente pago",  value: formatEuros(pendienteCents), sub: `${facturas.filter(i=>!i.isPaid).length} factura${facturas.filter(i=>!i.isPaid).length !== 1 ? "s" : ""}` },
+            { label: "Pagado",          value: formatEuros(pagadoCents),    sub: `${facturas.filter(i=>i.isPaid).length} factura${facturas.filter(i=>i.isPaid).length !== 1 ? "s" : ""}` },
           ].map((card) => (
             <div key={card.label} className="rounded-lg border p-4">
               <p className="text-xs text-muted-foreground mb-1">{card.label}</p>
@@ -201,7 +204,9 @@ export function FinancieroSearchClient({
                     <tr
                       key={inv.id}
                       className={`hover:bg-muted/20 transition-colors ${
-                        inv.totalInCents < 0 ? "bg-orange-50/40 dark:bg-orange-900/10" : ""
+                        inv.isAlbaran ? "bg-sky-50/40 dark:bg-sky-900/10"
+                        : inv.totalInCents < 0 ? "bg-orange-50/40 dark:bg-orange-900/10"
+                        : ""
                       }`}
                     >
                       <td className="px-4 py-2.5">
@@ -224,6 +229,11 @@ export function FinancieroSearchClient({
                               <span className="text-muted-foreground/60 text-xs italic">Sin nº</span>
                             )}
                           </button>
+                          {inv.isAlbaran && (
+                            <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                              📋 Albarán
+                            </span>
+                          )}
                           {inv.totalInCents < 0 && (
                             <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400">
                               − Rectif.
