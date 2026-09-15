@@ -1,99 +1,38 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { requirePermission } from "@/core/auth/session";
 import { listPackages } from "@/modules/gestoria/actions/packages";
-import {
-  QUARTER_LABELS,
-  GESTORIA_STATUS_LABELS,
-  type GestoriaPackageRow,
-} from "@/modules/gestoria/types";
+import type { GestoriaPackageRow } from "@/modules/gestoria/types";
 import { PackageFormToggle } from "@/modules/gestoria/components/PackageFormToggle";
-import { PackageDeleteButton } from "@/modules/gestoria/components/PackageDeleteButton";
-
-function formatEuros(cents: number) {
-  return (cents / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT:     "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  SENT:      "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  CONFIRMED: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-};
-
-function PackageCard({
-  pkg, index, total, canWrite,
-}: {
-  pkg: GestoriaPackageRow;
-  index: number;
-  total: number;
-  canWrite: boolean;
-}) {
-  const label = `${QUARTER_LABELS[pkg.quarter]} ${pkg.year}`;
-
-  return (
-    <div className="relative group">
-      <Link
-        href={`/gestoria/${pkg.id}`}
-        className="block rounded-lg border p-4 hover:bg-muted/30 transition-colors pr-10"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold">{QUARTER_LABELS[pkg.quarter]} · {pkg.year}</span>
-              {total > 1 && <span className="text-xs text-muted-foreground">Envío {index + 1}</span>}
-              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[pkg.status]}`}>
-                {GESTORIA_STATUS_LABELS[pkg.status]}
-              </span>
-            </div>
-            {pkg.description && (
-              <p className="text-sm text-muted-foreground mt-0.5 truncate">{pkg.description}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              {pkg.itemCount} factura{pkg.itemCount !== 1 ? "s" : ""}
-              {pkg.sentAt && ` · Enviado ${new Date(pkg.sentAt).toLocaleDateString("es-ES")}`}
-            </p>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="font-mono text-sm font-semibold">{formatEuros(pkg.totalInCents)}</p>
-          </div>
-        </div>
-      </Link>
-
-      {/* Delete button — absolute, top-right, only for admins */}
-      {canWrite && (
-        <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-          <PackageDeleteButton
-            packageId={pkg.id}
-            packageLabel={label}
-            itemCount={pkg.itemCount}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
+import { GestoriaYearAccordion } from "@/modules/gestoria/components/GestoriaYearAccordion";
 
 export default async function GestoriaPage() {
   let actor: Awaited<ReturnType<typeof requirePermission>>;
   try {
-    actor = await requirePermission("suppliers:read");
+    actor = await requirePermission("gestoria:read");
   } catch {
     redirect("/login");
   }
 
   const canWrite = actor.role === "ADMIN" || actor.role === "RRHH";
-  const packages = await listPackages();
+  const isGestoria = actor.role === "GESTORIA";
+  const allPackages = await listPackages();
 
-  // Agrupar por año
+  // La gestora solo ve paquetes enviados o confirmados (no borradores)
+  const packages = isGestoria
+    ? allPackages.filter(p => p.status !== "DRAFT")
+    : allPackages;
+
+  const sentCount = packages.filter(p => p.status === "SENT").length;
+
+  // Agrupar por año (más reciente primero)
   const byYear = packages.reduce<Record<number, GestoriaPackageRow[]>>((acc, p) => {
     (acc[p.year] ??= []).push(p);
     return acc;
   }, {});
-
   const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 py-6 px-4">
+    <div className="max-w-3xl mx-auto space-y-6 py-6 px-4">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Gestoría</h1>
@@ -103,6 +42,23 @@ export default async function GestoriaPage() {
         </div>
         {canWrite && <PackageFormToggle />}
       </div>
+
+      {/* ── Banner paquetes pendientes de confirmar (solo para la gestora) ── */}
+      {sentCount > 0 && !canWrite && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 px-4 py-3">
+          <span className="text-blue-500 text-lg leading-none mt-0.5">📬</span>
+          <div>
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+              {sentCount === 1
+                ? "Tienes 1 paquete pendiente de confirmar"
+                : `Tienes ${sentCount} paquetes pendientes de confirmar`}
+            </p>
+            <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+              Revisa el detalle y pulsa "Recibido" cuando hayas procesado las facturas.
+            </p>
+          </div>
+        </div>
+      )}
 
       {packages.length === 0 ? (
         <div className="rounded-lg border border-dashed py-16 text-center">
@@ -114,26 +70,7 @@ export default async function GestoriaPage() {
           )}
         </div>
       ) : (
-        <div className="space-y-8">
-          {years.map((year) => (
-            <div key={year}>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                {year}
-              </h2>
-              <div className="space-y-2">
-                {byYear[year].map((pkg, idx, arr) => (
-                  <PackageCard
-                    key={pkg.id}
-                    pkg={pkg}
-                    index={idx}
-                    total={arr.length}
-                    canWrite={canWrite}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <GestoriaYearAccordion byYear={byYear} years={years} canWrite={canWrite} />
       )}
     </div>
   );

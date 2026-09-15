@@ -6,7 +6,10 @@ import {
   removeInvoiceFromPackageAction,
   markPackageSentAction,
   markPackageConfirmedAction,
+  setPackageStatusAction,
 } from "@/modules/gestoria/actions/packages";
+import { getInvoiceAction } from "@/modules/suppliers/actions/invoices";
+import { InvoiceDetailPanel } from "@/modules/suppliers/components/InvoiceDetailPanel";
 import { AddInvoicesPanel } from "./AddInvoicesPanel";
 import {
   GESTORIA_STATUS_LABELS,
@@ -15,6 +18,7 @@ import {
   type GestoriaItemRow,
   type CandidateInvoice,
 } from "@/modules/gestoria/types";
+import type { InvoiceRow } from "@/modules/suppliers/types";
 
 function formatEuros(cents: number) {
   return (cents / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -31,14 +35,28 @@ interface Props {
   items:      GestoriaItemRow[];
   candidates: CandidateInvoice[];
   canWrite:   boolean;
+  canConfirm: boolean;
+  isAdmin:    boolean;
 }
 
-export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props) {
+export function PackageDetailClient({ pkg, items, candidates, canWrite, canConfirm, isAdmin }: Props) {
   const router = useRouter();
   const [showAdd, setShowAdd] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [confirmSend, setConfirmSend] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRow | null>(null);
+  const [loadingInvoiceId, setLoadingInvoiceId] = useState<string | null>(null);
+
+  async function handleOpenInvoice(invoiceId: string) {
+    setLoadingInvoiceId(invoiceId);
+    try {
+      const inv = await getInvoiceAction(invoiceId);
+      if (inv) setSelectedInvoice(inv);
+    } finally {
+      setLoadingInvoiceId(null);
+    }
+  }
 
   // Agrupar ítems por proveedor
   const bySupplier = items.reduce<Record<string, GestoriaItemRow[]>>((acc, item) => {
@@ -74,8 +92,18 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
     });
   }
 
-  const isDraft = pkg.status === "DRAFT";
-  const isSent  = pkg.status === "SENT";
+  function handleSetStatus(status: "DRAFT" | "SENT" | "CONFIRMED") {
+    setActionError(null);
+    startTransition(async () => {
+      const res = await setPackageStatusAction(pkg.id, status);
+      if (res.error) setActionError(res.error);
+      else router.refresh();
+    });
+  }
+
+  const isDraft    = pkg.status === "DRAFT";
+  const isSent     = pkg.status === "SENT";
+  const isConfirmed = pkg.status === "CONFIRMED";
 
   return (
     <div className="space-y-6">
@@ -102,6 +130,7 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
         </div>
 
         <div className="flex flex-wrap gap-2 shrink-0">
+          {/* ADMIN / RRHH: editar borrador */}
           {canWrite && isDraft && (
             <button type="button" onClick={() => setShowAdd(true)} disabled={isPending}
               className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
@@ -111,15 +140,43 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
           {canWrite && isDraft && items.length > 0 && !confirmSend && (
             <button type="button" onClick={() => setConfirmSend(true)} disabled={isPending}
               className="rounded-md border border-blue-500 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 disabled:opacity-60">
-              Marcar como enviado
+              Enviar a gestoría
             </button>
           )}
-          {canWrite && isSent && (
+
+          {/* GESTORIA: confirmar paquete recibido */}
+          {canConfirm && !canWrite && isSent && (
             <button type="button" onClick={handleMarkConfirmed} disabled={isPending}
               className="rounded-md border border-green-500 px-4 py-2 text-sm text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 disabled:opacity-60">
-              {isPending ? "Guardando…" : "Confirmar recepción"}
+              {isPending ? "Guardando…" : "✓ Recibido"}
             </button>
           )}
+
+          {/* ADMIN: selector de estado libre */}
+          {isAdmin && (
+            <div className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+              <span className="text-xs text-muted-foreground">Estado:</span>
+              {(["DRAFT", "SENT", "CONFIRMED"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => pkg.status !== s && handleSetStatus(s)}
+                  disabled={isPending || pkg.status === s}
+                  className={`rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-default ${
+                    pkg.status === s
+                      ? s === "DRAFT"   ? "bg-amber-500 text-white"
+                      : s === "SENT"    ? "bg-blue-600 text-white"
+                      :                   "bg-green-600 text-white"
+                      : "text-muted-foreground hover:bg-muted disabled:opacity-50"
+                  }`}
+                  title={s === "DRAFT" ? "En preparación" : s === "SENT" ? "En gestoría" : "Recibido"}
+                >
+                  {s === "DRAFT" ? "Borrador" : s === "SENT" ? "Enviado" : "Recibido"}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Descargar ZIP de PDFs */}
           {items.some(i => i.fileId || i.bundleFileId) && (
             <a
@@ -137,7 +194,7 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
       {confirmSend && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-900/20 p-4 space-y-3">
           <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-            ¿Marcar este paquete como enviado a la gestora? No podrás añadir ni quitar facturas después.
+            ¿Marcar este paquete como "En gestoría"? No podrás añadir ni quitar facturas después.
           </p>
           <div className="flex gap-3">
             <button type="button" onClick={handleMarkSent} disabled={isPending}
@@ -208,19 +265,18 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
                     {supplierItems.map((item) => (
                       <tr key={item.id} className="hover:bg-muted/20">
                         <td className="px-4 py-2.5">
-                          {item.fileId ? (
-                            <a href={`/api/files/invoices/${item.fileId}`} target="_blank"
-                              rel="noopener noreferrer" className="text-primary hover:underline">
-                              {item.invoiceNumber ?? "Sin nº"}
-                            </a>
-                          ) : item.bundleFileId ? (
-                            <a href={`/api/files/bundles/${item.bundleFileId}`} target="_blank"
-                              rel="noopener noreferrer" className="text-primary hover:underline">
-                              {item.invoiceNumber ?? "Sin nº"}
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground">{item.invoiceNumber ?? "Sin nº"}</span>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenInvoice(item.invoiceId)}
+                            disabled={loadingInvoiceId === item.invoiceId}
+                            className="text-primary hover:underline text-left disabled:opacity-60"
+                            title="Ver detalle de la factura"
+                          >
+                            {loadingInvoiceId === item.invoiceId
+                              ? <span className="text-muted-foreground text-xs">…</span>
+                              : (item.invoiceNumber ?? <span className="text-muted-foreground italic text-xs">Sin nº</span>)
+                            }
+                          </button>
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground">{item.invoiceDate}</td>
                         <td className="px-4 py-2.5 text-right font-mono">{formatEuros(item.totalInCents)}</td>
@@ -276,6 +332,15 @@ export function PackageDetailClient({ pkg, items, candidates, canWrite }: Props)
           packageId={pkg.id}
           candidates={candidates}
           onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {/* ── Panel detalle factura (solo lectura) ── */}
+      {selectedInvoice && (
+        <InvoiceDetailPanel
+          invoice={selectedInvoice}
+          onClose={() => setSelectedInvoice(null)}
+          readOnly
         />
       )}
     </div>

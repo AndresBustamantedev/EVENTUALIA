@@ -32,6 +32,10 @@ export const ALL_PERMISSIONS = [
   // Proveedores
   "suppliers:read",
   "suppliers:write",
+  // Gestoría
+  "gestoria:read",
+  "gestoria:write",
+  "gestoria:confirm",
 ] as const;
 
 export type Permission = (typeof ALL_PERMISSIONS)[number];
@@ -56,6 +60,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   ],
   ENCARGADO: [
     "suppliers:read",
+    "gestoria:read",
     "hr:schedules:read", // Horarios de todos los empleados (nombre, días, horas)
     "menu:read",
     "menu:write",
@@ -63,6 +68,10 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   ],
   COCINA: [
     "menu:read", // Solo menú del día vigente
+  ],
+  GESTORIA: [
+    "gestoria:read",    // Solo puede ver la sección de gestoría
+    "gestoria:confirm", // Puede confirmar recepción de paquetes enviados
   ],
 };
 
