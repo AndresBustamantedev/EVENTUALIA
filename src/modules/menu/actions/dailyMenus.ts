@@ -561,23 +561,46 @@ export async function publishMenuAction(menuId: string): Promise<MenuState> {
     return { error: "El menú no tiene platos. Añade al menos un plato antes de publicar." };
   }
 
-  // Verificar que no hay otro ACTIVE en esa fecha
+  // Auto-actualizar fecha si es pasada (flujo plantilla diaria)
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const menuDateNorm = new Date(menu.menuDate as Date);
+  menuDateNorm.setUTCHours(0, 0, 0, 0);
+  const dateIsInPast = menuDateNorm.getTime() < today.getTime();
+
+  // Verificar que no hay otro ACTIVE en la fecha destino
+  const targetDate = dateIsInPast ? today : (menu.menuDate as Date);
   const conflicting = await dailyMenuModel.findFirst({
-    where: { menuDate: menu.menuDate, status: "ACTIVE", id: { not: menuId } },
+    where: { menuDate: targetDate, status: "ACTIVE", id: { not: menuId } },
     select: { id: true },
   });
   if (conflicting) {
     return { error: "Ya existe un menú activo para esa fecha. Desactívalo antes de publicar este." };
   }
 
+  // Si la fecha es pasada, verificar también que no hay DRAFT para hoy (conflicto unique)
+  if (dateIsInPast) {
+    const conflictingDraft = await dailyMenuModel.findFirst({
+      where: { menuDate: today, status: "DRAFT", id: { not: menuId } },
+      select: { id: true },
+    });
+    if (conflictingDraft) {
+      return { error: "Ya existe un borrador para hoy. Elimínalo o cámbialo de fecha antes de publicar." };
+    }
+  }
+
   await dailyMenuModel.update({
     where: { id: menuId },
-    data: { status: "ACTIVE", updatedById: actor.id },
+    data: {
+      status: "ACTIVE",
+      ...(dateIsInPast ? { menuDate: today } : {}),
+      updatedById: actor.id,
+    },
   });
 
   revalidatePath("/menu");
   revalidatePath(`/menu/${menuId}`);
-  return { success: "Menú publicado." };
+  return { success: dateIsInPast ? "Menú publicado (fecha actualizada a hoy)." : "Menú publicado." };
 }
 
 // ── Desactivar menú ───────────────────────────────────────────
@@ -594,19 +617,41 @@ export async function unpublishMenuAction(menuId: string): Promise<MenuState> {
 
   const menu = await dailyMenuModel.findUnique({
     where: { id: menuId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, menuDate: true },
   });
   if (!menu) return { error: "Menú no encontrado." };
   if (menu.status === "DRAFT") return { error: "El menú ya está en borrador." };
 
+  // Auto-actualizar fecha a hoy si es pasada (flujo plantilla diaria)
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const menuDateNorm = new Date(menu.menuDate as Date);
+  menuDateNorm.setUTCHours(0, 0, 0, 0);
+  const dateIsInPast = menuDateNorm.getTime() < today.getTime();
+
+  let autoUpdatedDate = false;
+  if (dateIsInPast) {
+    const conflicting = await dailyMenuModel.findFirst({
+      where: { menuDate: today, id: { not: menuId } },
+      select: { id: true },
+    });
+    if (!conflicting) {
+      autoUpdatedDate = true;
+    }
+  }
+
   await dailyMenuModel.update({
     where: { id: menuId },
-    data: { status: "DRAFT", updatedById: actor.id },
+    data: {
+      status: "DRAFT",
+      ...(autoUpdatedDate ? { menuDate: today } : {}),
+      updatedById: actor.id,
+    },
   });
 
   revalidatePath("/menu");
   revalidatePath(`/menu/${menuId}`);
-  return { success: "Menú desactivado." };
+  return { success: autoUpdatedDate ? "Menú desactivado (fecha actualizada a hoy)." : "Menú desactivado." };
 }
 
 // ── Duplicar menú ─────────────────────────────────────────────
