@@ -91,6 +91,7 @@ export default async function MenuPage({ searchParams }: PageProps) {
             <thead>
               <tr className="border-b border-input bg-muted/40">
                 <th className="px-4 py-2 text-left font-medium text-muted-foreground">Menú</th>
+                <th className="px-4 py-2 text-left font-medium text-muted-foreground">Fecha</th>
                 <th className="px-4 py-2 text-left font-medium text-muted-foreground">Precio</th>
                 <th className="px-4 py-2 text-left font-medium text-muted-foreground">Platos</th>
                 <th className="px-4 py-2 text-left font-medium text-muted-foreground">Estado</th>
@@ -104,6 +105,9 @@ export default async function MenuPage({ searchParams }: PageProps) {
                     <Link href={`/menu/${menu.id}`} className="font-medium hover:underline">
                       {menu.menuTitle}
                     </Link>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                    {new Date(menu.menuDate + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {formatPrice(menu.priceInCents)}
